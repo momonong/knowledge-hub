@@ -1,0 +1,119 @@
+.guide-stage + .guide-stage {
+  border-top: 1px solid var(--border);
+  margin-top: 1.55rem;
+  padding-top: 1.1rem;
+}
+.layer-guide .guide-stage h3 {
+  color: var(--ink);
+  font-size: 1.15rem;
+  line-height: 1.45;
+  margin: 0 0 .7rem;
+}
+.guide-stage .prose {
+  margin: .25rem 0 .7rem;
+}
+.guide-citations {
+  color: var(--muted);
+  font-size: .86rem;
+  margin: .15rem 0 .65rem;
+}
+.guide-citations > summary {
+  cursor: pointer;
+  padding: .4rem 0;
+  width: fit-content;
+}
+.guide-visual-card, .guide-tradeoffs {
+  background: var(--surface);
+  border-inline-start: 2px solid var(--control);
+  margin-top: .9rem;
+  padding: .75rem 1rem;
+}
+.guide-visual-card {
+  border-inline-start-color: var(--accent);
+}
+[data-guide-visual-link] {
+  align-items: center;
+  display: inline-flex;
+  font-weight: 650;
+  min-height: 44px;
+}
+.guide-visual-instruction, .guide-stage .guide-visual-quote {
+  margin: .15rem 0 .45rem;
+}
+.guide-stage .guide-visual-quote {
+  border-inline-start: 1px solid var(--control);
+  color: var(--muted);
+  font-size: .88rem;
+}
+.guide-tradeoffs h4 {
+  font-size: 1rem;
+  margin: 0 0 .3rem;
+}
+.guide-chips {
+  display: grid;
+  gap: .55rem;
+}
+.guide-chip {
+  background: transparent;
+  border: 1px solid var(--control);
+  border-radius: .4rem;
+  color: var(--accent);
+  min-height: 44px;
+  overflow-wrap: anywhere;
+  padding: .55rem .7rem;
+  text-align: start;
+}
+.guide-chip:hover {
+  background: var(--surface);
+  border-color: var(--accent);
+}
+.guide-chip:focus-visible,
+[data-guide-visual-link]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+[data-followup-pending] .guide-chip {
+  cursor: progress;
+}
+.guide-controls {
+  margin-top: .7rem;
+}
+.layer-selection-tools[hidden] {
+  display: none;
+}
+.layer-selection-tools[data-selection-placed] {
+  bottom: auto;
+  inset-inline-end: auto;
+  margin: 0;
+  max-width: calc(100vw - 16px);
+  z-index: 24;
+}
+.layer-selection-tools {
+  gap: .5rem;
+}
+.layer-selection-notice {
+  flex-basis: 100%;
+  font-size: .875rem;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.layer-selection-notice[data-error] {
+  color: var(--warning);
+}
+.layer-selection-receipt {
+  clip-path: inset(50%);
+  height: 1px;
+  margin: 0;
+  overflow: hidden;
+  position: absolute;
+  white-space: nowrap;
+  width: 1px;
+}
+@media (max-width: 660px) {
+  .guide-visual-card, .guide-tradeoffs {
+    padding-inline: .7rem;
+  }
+  .layer-selection-tools[data-selection-placed] {
+    max-height: min(32vh, 12rem);
+  }
+}
