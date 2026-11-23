@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="zh-Hant"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>登入與密碼 — Knowledge Hub</title>
+<link rel="icon" type="image/svg+xml" href="/sites/_icons/v1/knowledge.svg">
+<link rel="stylesheet" href="{{prefix}}/access/access.css">
+<script src="{{prefix}}/access/access.js" defer></script></head>
+<body data-mode="{{mode}}" data-prefix="{{prefix}}">
+<header><a class="brand" href="{{prefix}}/">Knowledge Hub</a><a href="/#passwords">首頁密碼管理 ↗</a></header>
+<main>
+<section id="login-panel" hidden><h1>登入後，接著學</h1>
+<p>輸入 Knowledge Hub 的獨立密碼，接續閱讀、問題與筆記。</p>
+<form id="login-form" method="post" action="{{prefix}}/access/login">
+<label for="login-password">Knowledge Hub 密碼</label>
+<input id="login-password" name="password" type="password" autocomplete="current-password" required maxlength="128">
+<button type="submit" disabled>登入 Knowledge Hub</button></form>
+<p class="hint">第一次使用？先到<a href="{{prefix}}/settings/">設定 KH 密碼</a>。</p></section>
+<section id="settings-panel" hidden><h1>Knowledge Hub 密碼</h1>
+<p>由站主管理設定，供 Knowledge Hub 獨立登入使用。</p>
+<form id="owner-form" method="post" action="/home-api/login" hidden>
+<label for="owner-password">首頁站主管理密碼</label>
+<input id="owner-password" name="password" type="password" autocomplete="current-password" required>
+<button type="submit">登入站主管理</button></form>
+<form id="settings-form" method="post" action="{{prefix}}/access/password" hidden>
+<label for="new-password">新的 KH 密碼</label>
+<input id="new-password" name="password" type="password" autocomplete="new-password" required minlength="12" maxlength="128" aria-describedby="password-help">
+<p id="password-help" class="hint">12–128 字，可用中文或一段片語，首尾空格會保留。請選擇與首頁不同的密碼。</p>
+<label for="repeat-password">再輸入一次</label>
+<input id="repeat-password" type="password" autocomplete="new-password" required minlength="12" maxlength="128">
+<p class="hint">儲存後，KH 原有登入會失效。閱讀進度、追問和私人筆記都會保留。</p>
+<button type="submit">儲存 KH 密碼</button></form>
+<button id="owner-logout" class="secondary" type="button" hidden>登出站主管理</button>
+<p><a href="{{prefix}}/">前往 Knowledge Hub →</a></p></section>
+<section id="logout-panel" hidden><h1>登出 Knowledge Hub</h1>
+<p>已保存的內容會保留，下次登入可以繼續。</p>
+<button id="reader-logout" type="button" disabled>登出 Knowledge Hub</button>
+<p><a href="{{prefix}}/">繼續閱讀 →</a></p></section>
+<p id="result" role="status" aria-live="polite"></p>
+<noscript><p>請啟用 JavaScript，以安全完成登入與密碼設定。</p></noscript>
+</main><footer>閱讀、提問與理解，接著往下走。</footer></body></html>
