@@ -1,0 +1,60 @@
+/* Shared by the reading workspace, management and login. */
+:root {
+  color-scheme: light dark;
+  --ground: #f6f3e9;
+  --surface: #eee9db;
+  --raised: #fdfaf1;
+  --ink: #252d2e;
+  --muted: #515d5d;
+  --accent: #284f65;
+  --on-accent: #fdfaf1;
+  --accent-hover: #1b394d;
+  --accent-tint: #e5ebeb;
+  --accent-line: #527e93;
+  --border: #d2cabb;
+  --rule: #a1a39a;
+  --control: #777e78;
+  --highlight: #f3dd8b;
+  --highlight-ink: #252d2e;
+  --evidence: #365b45;
+  --evidence-tint: #e4ebe2;
+  --caution: #6d512e;
+  --caution-tint: #efe8db;
+  --warning: #8a342d;
+  --warning-tint: #f3e4df;
+  --body-font: system-ui, -apple-system, "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif;
+  --display-font: Georgia, "Noto Serif TC", "Noto Serif CJK TC", "Songti TC", "PMingLiU", serif;
+  --page-gutter: clamp(1rem, 3vw, 2rem);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ground: #202524;
+    --surface: #2a302e;
+    --raised: #252b29;
+    --ink: #f0ece0;
+    --muted: #bbbfba;
+    --accent: #a5cde0;
+    --on-accent: #142a36;
+    --accent-hover: #c9e6f3;
+    --accent-tint: #2d4148;
+    --accent-line: #88b0c4;
+    --border: #454e4a;
+    --rule: #727d75;
+    --control: #89968f;
+    --highlight: #58491f;
+    --highlight-ink: #ffedb0;
+    --evidence: #b5d2be;
+    --evidence-tint: #30433a;
+    --caution: #e7ca9e;
+    --caution-tint: #40392e;
+    --warning: #f4b9ae;
+    --warning-tint: #4a302e;
+  }
+}
+
+.kh-book {
+  width: 32px;
+  height: 32px;
+  flex: none;
+}

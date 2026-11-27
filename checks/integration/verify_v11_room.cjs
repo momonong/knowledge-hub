@@ -18,14 +18,24 @@ const visual = {
     })))}]
 };
 
-async function fixture(browser, width) {
+const appPrompt = '作者怎麼量測這個變化？';
+const appEvidence = {anchor:'S2.p10', quote:'The measured source text.', href:'/items/4?version=7#S2.p10'};
+const appGuide = {
+  item_id:4, version_id:7, mode:'model', model:{state:'ready',route:'primary'},
+  sections:['hook','mechanism','evidence','limits'].map(role=>({role,text:'這段解讀對照固定版本。'})),
+  chips:[{role:'mechanism',question:appPrompt,anchor:appEvidence.anchor,citations:[appEvidence]}],
+};
+
+async function fixture(browser, width, guide) {
   const html = await fs.readFile(fixtureFile, 'utf8');
   const context = await browser.newContext({viewport:{width, height:860}});
   const page = await context.newPage();
   const errors = [];
-  const saves = [];
+  const saves = [], questions = [];
   let releaseVisual;
   const visualGate = new Promise(resolve => {releaseVisual = resolve;});
+  let releaseGuide;
+  const guideGate = new Promise(resolve => {releaseGuide = resolve;});
   page.on('pageerror', error => errors.push(error.message));
   await context.route('**/*', async route => {
     const url = new URL(route.request().url());
@@ -41,7 +51,20 @@ async function fixture(browser, width) {
       saves.push(Object.fromEntries(new URLSearchParams(route.request().postData())));
       return route.fulfill({json:{revision:3 + saves.length}});
     }
-    if (requestPath === '/static/layers.js' || requestPath === '/static/reading-actions.css') return route.fulfill({status:204});
+    if (guide && requestPath === '/items/4/guide') {
+      assert.equal(url.searchParams.get('version'), '7');
+      await guideGate;
+      return route.fulfill({json:guide});
+    }
+    if (guide && requestPath === '/items/4/followup') {
+      assert.equal(route.request().method(),'POST');
+      questions.push(Object.fromEntries(new URLSearchParams(route.request().postData())));
+      return route.fulfill({contentType:'text/event-stream',body:
+        'event: meta\ndata: {"id":42,"mode":"model"}\n\nevent: done\ndata: {"id":42}\n\n'});
+    }
+    if (!guide && (requestPath === '/static/layers.js' || requestPath === '/static/reading-actions.css')) {
+      return route.fulfill({status:204});
+    }
     if (requestPath.startsWith('/static/')) {
       const body = await fs.readFile(path.join('knowledge_hub', requestPath));
       return route.fulfill({body, contentType:requestPath.endsWith('.css') ? 'text/css' : 'application/javascript'});
@@ -49,6 +72,7 @@ async function fixture(browser, width) {
     return route.fulfill({status:404});
   });
   await page.goto(pageUrl);
+  if (guide) return {context,page,errors,questions,releaseGuide,releaseVisual};
   await page.locator('#layer-guide').evaluate(node => {
     const quote = document.createElement('a');
     quote.id = 'fixture-quote';
@@ -137,11 +161,98 @@ async function mobile(browser, width) {
   } finally { releaseVisual(); await context.close(); }
 }
 
+async function dispatchAppQuestion(page, detail = {}) {
+  return page.locator('[data-reader]').evaluate((reader, fields) => !reader.dispatchEvent(
+    new CustomEvent('kh-app-followup',{cancelable:true,detail:fields})
+  ), {item:'4',version:'7',role:'mechanism',question:appPrompt,...detail});
+}
+
+async function appFollowup(browser, scenario) {
+  const guide = scenario === 'unavailable'
+    ? {...appGuide, mode:'local', model:{state:'unavailable'}, sections:[], chips:[]}
+    : appGuide;
+  const {context,page,errors,questions,releaseGuide,releaseVisual} = await fixture(browser,390,guide);
+  try {
+    assert.equal(await page.locator('[data-reader]').getAttribute('data-kh-app-followup'),'1');
+    const draft = page.locator('#followup');
+    const original = await draft.inputValue();
+    assert.equal(original,'Return to the draft.');
+    const review = page.locator('[data-app-followup-review]');
+    if (scenario === 'wrong-version') {
+      assert.equal(await dispatchAppQuestion(page,{version:'8'}),false);
+      assert.equal(await dispatchAppQuestion(page,{item:'5'}),false);
+      assert.equal(await dispatchAppQuestion(page,{role:'limits'}),false);
+      assert.equal(await dispatchAppQuestion(page,{question:'字'.repeat(2001)}),false);
+      releaseGuide();
+      await page.locator('[data-guide-chip="mechanism"]').waitFor({state:'attached'});
+      assert.deepEqual(questions,[]);
+      assert.equal(await page.locator('[data-room-drawer]').isVisible(),false);
+      return;
+    }
+    if (scenario === 'matched') {
+      assert.equal(await dispatchAppQuestion(page),true);
+      assert.equal(await dispatchAppQuestion(page),true);
+      assert.deepEqual(questions,[]);
+      releaseGuide();
+      await page.getByText('回覆已保存。',{exact:true}).first().waitFor();
+      assert.equal(questions.length,1);
+      const [sent] = questions;
+      assert.equal(sent.question,appPrompt);
+      assert.equal(sent.version_id,'7');
+      assert.equal(sent.route,'primary');
+      assert.equal(sent.anchor,appEvidence.anchor);
+      assert.equal(sent.quote,appEvidence.quote);
+      assert.equal(sent.csrf,'csrf');
+      assert.equal(await draft.inputValue(),original);
+      assert.equal(await dispatchAppQuestion(page),true);
+      assert.equal(questions.length,1);
+      assert.equal(await review.count(),0);
+      await page.reload();
+      await page.locator('[data-guide-chip="mechanism"]').waitFor({state:'attached'});
+      assert.equal(questions.length,1);
+      return;
+    }
+    const question = scenario === 'unmatched' ? appPrompt + ' 請舉例。' : appPrompt;
+    if (scenario === 'unmatched') {
+      releaseGuide();
+      await page.locator('[data-guide-chip="mechanism"]').waitFor({state:'attached'});
+    }
+    assert.equal(await dispatchAppQuestion(page,{question}),true);
+    releaseGuide();
+    await review.waitFor();
+    const editable = review.locator('textarea');
+    assert.equal(await editable.inputValue(),question);
+    assert.match(await review.textContent(),/請檢查或修改問題，再手動送出/);
+    assert.equal(await draft.inputValue(),original);
+    assert.deepEqual(questions,[]);
+    if (scenario === 'unmatched') {
+      const revised = '我想核對實驗中的量測條件。';
+      await editable.fill(revised);
+      assert.equal(await dispatchAppQuestion(page,{question}),true);
+      assert.equal(await editable.inputValue(),revised);
+      await review.getByRole('button',{name:'送出這個問題'}).click();
+      await page.getByText('回覆已保存。',{exact:true}).first().waitFor();
+      assert.equal(questions.length,1);
+      assert.equal(questions[0].question,revised);
+      assert.equal(questions[0].anchor,'');
+      assert.equal(questions[0].quote,'');
+      assert.equal(await draft.inputValue(),original);
+    }
+  } finally {
+    releaseGuide();
+    releaseVisual();
+    await context.close();
+    assert.deepEqual(errors,[]);
+  }
+}
+
 (async () => {
   const browser = await chromium.launch({executablePath:process.env.CHROME_PATH, args:['--disable-dev-shm-usage']});
   try {
     await desktop(browser);
     for (const width of [390, 320]) await mobile(browser, width);
     console.log('Reading room passed at 1360, 390, and 320 pixels.');
+    for (const scenario of ['matched','wrong-version','unmatched','unavailable']) await appFollowup(browser,scenario);
+    console.log('App follow-up passed: queued single send, rejected wrong edition, manual unmatched and unavailable.');
   } finally { await browser.close(); }
 })().catch(error => {console.error(error); process.exitCode = 1;});

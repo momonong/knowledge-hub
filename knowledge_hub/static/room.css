@@ -1,10 +1,9 @@
 .reading-room {
-  --room-ink: #23342f;
-  --room-accent: #235b51;
-  --room-border: #d9e1dc;
-  --room-guide: #fcfdfa;
-  --room-paper: #f8f7f0;
-  --room-highlight: #e7eee2;
+  --room-ink: var(--ink);
+  --room-accent: var(--accent);
+  --room-border: var(--border);
+  --room-guide: var(--ground);
+  --room-paper: var(--raised);
   color: var(--room-ink);
   min-width: 0;
 }
@@ -29,7 +28,7 @@
 
 .room-tabs { display: none; }
 
-.room-save-status { color: #8a3b20; margin: 0 0 10px; }
+.room-save-status { color: var(--warning); margin: 0 0 10px; }
 .room-save-status:empty { margin: 0; }
 
 .room-tool,
@@ -38,7 +37,7 @@
   padding: 8px 13px;
   border: 1px solid var(--room-border);
   border-radius: 6px;
-  background: #fff;
+  background: var(--ground);
   color: var(--room-ink);
   cursor: pointer;
 }
@@ -50,7 +49,7 @@
 .room-tool[aria-pressed="true"] {
   border-color: var(--room-accent);
   background: var(--room-accent);
-  color: #fff;
+  color: var(--on-accent);
 }
 
 .reading-room :focus-visible {
@@ -60,8 +59,8 @@
 
 .room-panes {
   display: grid;
-  grid-template-columns: minmax(0, .9fr) minmax(0, 1.1fr);
-  gap: clamp(12px, 2vw, 24px);
+  grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
+  border-block-start: 1px solid var(--rule);
   align-items: stretch;
 }
 
@@ -73,13 +72,17 @@
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
   padding: clamp(14px, 2.2vw, 26px);
-  border: 1px solid var(--room-border);
-  border-radius: 10px;
   overflow-wrap: anywhere;
 }
 
-.room-guide { background: var(--room-guide); }
-.room-source { background: var(--room-paper); }
+.room-guide {
+  background: var(--room-guide);
+  padding-inline-start: 0;
+}
+.room-source {
+  background: var(--room-paper);
+  border-inline-start: 1px solid var(--rule);
+}
 
 .room-connections {
   margin-block-end: 16px;
@@ -137,7 +140,8 @@
 
 .room-source-header h2 {
   margin: 0;
-  font-size: 1.15rem;
+  color: var(--room-accent);
+  font: 700 clamp(1.2rem, 2vw, 1.45rem)/1.35 var(--display-font);
 }
 
 .room-source-links {
@@ -155,6 +159,7 @@
 .room-source .source-paragraph {
   padding: 12px 10px;
   margin-inline: -10px;
+  border-inline-start: 0;
   scroll-margin-block-start: 12px;
   border-block-end-color: var(--room-border);
 }
@@ -163,25 +168,25 @@
 .room-source .visual-card { scroll-margin-block-start: 12px; }
 
 .room-source .room-highlight {
-  border-radius: 5px;
-  background: var(--room-highlight);
-  box-shadow: inset 3px 0 var(--room-accent);
+  background: var(--highlight);
+  color: var(--highlight-ink);
+  box-shadow: inset 3px 0 var(--accent);
 }
 
 .room-source .visual-card.room-highlight {
   padding-inline: 10px;
 }
 
-.room-source tr.room-row-highlight { background: #d6e9c8; }
+.room-source tr.room-row-highlight { background: var(--highlight); color: var(--highlight-ink); }
 
 ::highlight(room-evidence) {
-  background: #cce6c1;
-  color: #1a362b;
+  background: var(--highlight);
+  color: var(--highlight-ink);
 }
 
 .reading-room[data-room-focused] .room-panes { grid-template-columns: minmax(0, 1fr); }
 .reading-room[data-room-focused] .room-guide { display: none; }
-.reading-room[data-room-focused] .room-source { width: 100%; max-width: 65rem; margin-inline: auto; }
+.reading-room[data-room-focused] .room-source { width: 100%; max-width: 65rem; margin-inline: auto; border-inline-start: 0; }
 
 .room-fold {
   margin-top: 16px;
@@ -210,7 +215,7 @@
   border-bottom: 0;
   border-radius: 14px 14px 0 0;
   background: var(--room-guide);
-  box-shadow: 0 -8px 30px #23342f24;
+  box-shadow: 0 -8px 30px rgb(32 33 36 / 14%);
   overflow-wrap: anywhere;
 }
 
@@ -237,7 +242,11 @@
     block-size: auto;
     overflow: visible;
     scrollbar-gutter: auto;
+    border-inline-start: 0;
+    padding-inline: 0;
   }
+
+  .room-source { background: var(--room-guide); }
 
   .room-source-header { grid-template-columns: minmax(0, 1fr); }
 
@@ -246,5 +255,43 @@
     width: auto;
     max-height: 82dvh;
     padding-inline: 12px;
+  }
+}
+
+html[data-native-reader] .room-navigation {
+  gap: .35rem;
+  margin-block-end: .5rem;
+}
+html[data-native-reader] .room-notes-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-block-size: 48px;
+  min-inline-size: 48px;
+  font-size: 1rem;
+  text-decoration: none;
+}
+html[data-native-reader] :is(.room-fold, .room-connections, .backgrounds) { margin-block: .55rem; }
+html[data-native-reader] .backgrounds { padding-block-start: .55rem; }
+html[data-native-reader] .room-connections [data-connection-reason] { font-size: 1rem; }
+html[data-native-reader] .room-source-header { margin-block-end: .625rem; }
+html[data-native-reader] .room-notes textarea,
+html[data-native-reader] .room-drawer textarea { font-size: 1rem; }
+
+@media (width < 940px) {
+  html[data-native-reader] .room-navigation { justify-content: start; }
+  html[data-native-reader] .room-tabs { gap: .35rem; }
+  html[data-native-reader] .room-tabs button,
+  html[data-native-reader] .room-tool { padding-inline: .65rem; }
+  html[data-native-reader] .room-pane { padding-block: .75rem; }
+  html[data-native-reader]:has(.room-drawer:not([hidden])) { overflow: hidden; }
+  html[data-native-reader] .room-drawer {
+    inset-inline: 0;
+    max-block-size: min(82dvh, calc(100dvh - 3rem));
+    padding-inline: var(--page-gutter);
+  }
+  html[data-native-reader] .room-drawer .conversation-log {
+    max-height: none;
+    overflow: visible;
   }
 }

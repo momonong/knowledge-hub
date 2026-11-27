@@ -177,6 +177,20 @@ class LoopbackTests(unittest.TestCase):
         config = model_stream.ModelConfig(self.base_url, 'fixture', structured=True)
         return model_stream.stream_model(config, self.messages, response_schema=schema, stream_sections=sections, **options)
 
+    def test_atomic_guide_allows_time_to_finish_after_its_first_content_token(self):
+        def response(handler):
+            header(handler)
+            write(handler, delta('{"text":'))
+            Event().wait(1.2)
+            write(handler, delta('"完整導讀"}') + delta(finish='stop') + b'data: [DONE]\r\n\r\n')
+        self.action = response
+        timing = {}
+        stream = self.structured_stream(sections=False, first_content_deadline=True,
+                                        first_timeout=0.8, total_timeout=3, timing=timing)
+        self.assertEqual([json.loads(line) for line in stream], [{'text':'完整導讀'}])
+        self.assertLess(timing['ttft_ms'], 800)
+        self.assertGreater(timing['first_line_ms'], 800)
+
     def test_structured_first_section_escapes_and_arrives_before_rest_of_object(self):
         finish = Event()
         self.addCleanup(finish.set)

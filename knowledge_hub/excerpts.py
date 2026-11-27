@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import re
+from functools import lru_cache
 from itertools import islice
+from sys import getsizeof
 
 _END = re.compile(r'[.!?。！？][\"\'”’」』）\]]*(?=\s|$|[\u3400-\u9fff])')
 # Start at the beginning of an intra-line space run. Retrying from every space
@@ -116,15 +118,34 @@ def _columns(text, first_prefix=''):
 
 def select_spans(blocks, terms, focus_terms, *, limit=3):
     """Rank complete sentences, with explicit bounded fragments as a fallback."""
+    texts = tuple(block['text'] for block in blocks)
+    # Limits bound retained source text on the shared host. The key includes
+    # paragraph order, retrieval terms and quota. Explicit questions bypass it.
+    if (not focus_terms and 0 < limit <= 64 and len(texts) <= 512
+            and sum(map(getsizeof, texts)) <= 1024 * 1024 and sum(map(len, terms)) <= 4096):
+        return list(_cached_spans(texts, frozenset(terms), limit))
+    return _rank_spans(texts, terms, focus_terms, limit)
+
+
+@lru_cache(maxsize=32)
+def _cached_spans(texts, terms, limit):
+    return tuple(_rank_spans(texts, terms, frozenset(), limit))
+
+
+def has_span(blocks, terms, focus_terms):
+    """The first eligible span suffices when the caller only needs its existence."""
+    texts = (block['text'] for block in blocks)
+    return next(_span_candidates(texts, terms, focus_terms), None) is not None
+
+
+def _span_candidates(texts, terms, focus_terms):
     ordered_terms = sorted(terms | focus_terms)
     patterns = [(re.compile((r'(?<!\w)' + re.escape(t) + r'(?!\w)') if t.isascii() else re.escape(t), re.I), t in focus_terms)
                 for t in ordered_terms]
     plain = {t for t in ordered_terms if t.isascii() and t == t.lower() and _WORDS.fullmatch(t)}
     special_patterns = [pattern for t, pattern in zip(ordered_terms, patterns) if t not in plain]
-    ranked = []
     skipping = False
-    for index, block in enumerate(blocks):
-        text = block['text']
+    for index, text in enumerate(texts):
         body_ranges, skipping = _body_ranges(text, skipping)
         for body_start, body_end in body_ranges:
             # Paragraph boundaries prevent headings, captions and equations from
@@ -173,10 +194,14 @@ def select_spans(blocks, terms, focus_terms, *, limit=3):
                         caption = caption_paragraph or bool(re.match(r'^(?:Table|Figure|Fig\.|表|圖)\s*\d+', sample, re.I))
                         explains = bool(_EXPLAINS.search(sample))
                         score += (4 if explains and hits >= 2 else 0) - (3 if caption else 0)
-                        ranked.append(((-bool(focus_hits), columns, fragment, -score, index, left), index, left, right, fragment, columns))
+                        order = (-bool(focus_hits), columns, fragment, -score, index, left)
+                        yield order, index, left, right, fragment, columns
+
+
+def _rank_spans(texts, terms, focus_terms, limit):
     selected, occupied, seen = [], [], set()
-    for _, index, start, end, fragment, columns in sorted(ranked):
-        text = blocks[index]['text'][start:end]
+    for _, index, start, end, fragment, columns in sorted(_span_candidates(texts, terms, focus_terms)):
+        text = texts[index][start:end]
         identity = re.sub(r'\s+', ' ', text).strip().casefold()
         if identity in seen or any(i == index and start < b and end > a for i, a, b in occupied):
             continue

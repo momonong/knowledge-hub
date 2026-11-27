@@ -1,0 +1,6 @@
+<resources>
+    <style name="KnowledgeHubTheme" parent="KnowledgeHubBaseTheme">
+        <item name="android:windowLightNavigationBar">@bool/reader_light_system_bars</item>
+        <item name="android:navigationBarColor">@color/reader_window_background</item>
+    </style>
+</resources>

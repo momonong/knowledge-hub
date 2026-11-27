@@ -33,6 +33,10 @@ _GREEK_INDEX = re.compile(r'([\u0370-\u03ff])_(?:\{(\d+)\}|(\d+))(?!\w)')
 _GREEK_MATH = re.compile(
     r'[\u0370-\u03ff]\d*(?:\s*[<>=≤≥≈±]\s*[-+−]?\d+(?:\.\d+)?%?)?'
 )
+_VARIABLE_MATH = re.compile(r'[A-Za-z0-9_α-ωΑ-Ω\s.+×·÷/()=≤≥<>−-]+')
+_TEXT_VARIABLE = re.compile(r'\\(?:mathrm|text)\{([A-Za-z][A-Za-z ]{0,24})\}')
+_VARIABLE_INDEX = re.compile(r'([A-Za-z])_(?:\{([A-Za-z0-9]+)\}|([A-Za-z0-9]+))')
+_SUBSCRIPT = str.maketrans('0123456789aehijklmnoprstuvx', '₀₁₂₃₄₅₆₇₈₉ₐₑₕᵢⱼₖₗₘₙₒₚᵣₛₜᵤᵥₓ')
 
 
 def plain_metric(text):
@@ -53,7 +57,16 @@ def plain_metric(text):
 
     def unwrap(match):
         inner = (match[1] or match[2]).strip()
-        return inner if _GREEK_MATH.fullmatch(inner) else match[0]
+        if _GREEK_MATH.fullmatch(inner):
+            return inner
+        expression = _TEXT_VARIABLE.sub(r'\1', inner)
+        expression = re.sub(r'_\{([A-Za-z0-9]+)\}', r'_\1', expression)
+        if not _VARIABLE_MATH.fullmatch(expression):
+            return match[0]
+        def subscript(index):
+            value = index[2] or index[3]
+            return index[1] + value.translate(_SUBSCRIPT) if all(ord(c) in _SUBSCRIPT for c in value) else index[0]
+        return _VARIABLE_INDEX.sub(subscript, expression)
 
     return _TEX_INLINE.sub(unwrap, display)
 

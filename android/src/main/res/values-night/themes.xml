@@ -1,0 +1,5 @@
+<resources>
+    <color name="reader_window_background">#202524</color>
+    <color name="kh_brand_ink">#90BCD2</color>
+    <bool name="reader_light_system_bars">false</bool>
+</resources>

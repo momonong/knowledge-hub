@@ -8,6 +8,7 @@ import unicodedata
 from urllib.parse import urlsplit
 
 from .connections import STOPWORDS, reading_url
+from .domains import METHOD_ALIASES, domain_only, related_domains, stated_passages, subject_blocks
 from .library import KnowledgeLibrary
 from .library_views import source_href
 from .sources import SAFE_ANCHOR_RE
@@ -19,6 +20,7 @@ _GENERIC = STOPWORDS | frozenset('''
     compare comparison data dataset datasets different effective efficient evaluation existing
     experiment experiments framework frameworks full general generation goal high improve
     improves including information introduce introduces large learning llm llms model modeling
+    autonomous driving driverless robotics robotic robots vehicle vehicles
     fine grained language natural reasoning reflection themselves transferable transformers
     models method methods module multiple network neural new novel number open paper performance
     proposed provides result results robust show shows single state system systems task tasks
@@ -78,9 +80,9 @@ _ALIASES = {
     '因果推論': ('causal inference', '因果推斷'),
     '資料洩漏': ('data leakage',),
     '分布偏移': ('distribution shift', 'distribution shifts', '分佈轉移'),
-    '政策梯度': ('policy gradient', 'policy gradients', '策略梯度'),
     '指令微調': ('instruction tuning', 'instruction finetuning', 'instruction fine tuning'),
     '提示注入': ('prompt injection',),
+    **METHOD_ALIASES,
 }
 
 # Broad but real domains provide useful background at a lower priority than a mechanism.
@@ -103,23 +105,23 @@ def _phrase(phrases):
 _PHRASES = {label: _phrase((label, *aliases)) for label, aliases in _ALIASES.items()}
 
 
-def _terms(text, tags):
+def _terms(text, tags, aliases):
     normalized = _normalize(text)
-    names = {label for label, pattern in _PHRASES.items() if pattern.search(normalized)}
-    names.update(label for label, pattern in tags.items() if pattern.search(normalized))
+    names = {label for label, pattern in aliases if pattern.search(normalized)}
+    names.update(label for label in tags if label in normalized)
     words = normalized.split()
     usable = [word not in _GENERIC and word.isascii() and not word.isdecimal() and len(word) >= 3 for word in words]
     phrases = {words[i] for i, good in enumerate(usable) if good and len(words[i]) >= 5}
     for width in (2, 3):
         phrases.update(' '.join(words[i:i+width]) for i in range(len(words) - width + 1)
                        if all(usable[i:i+width]))
-    return names, phrases
+    return names, {phrase for phrase in phrases if not domain_only(phrase)}
 
 
-def _weights(fields, tags):
+def _weights(fields, tags, aliases=_PHRASES.items()):
     terms = {}
     for field, weight in fields:
-        names, phrases = _terms(field, tags)
+        names, phrases = _terms(field, tags, aliases)
         for name in names:
             terms[name] = max(terms.get(name, 0), weight + 1)
         for phrase in phrases:
@@ -156,26 +158,9 @@ class _Candidate:
     evidence_hrefs: tuple = ()
 
 
-def _blocks(blocks):
-    """Focus on the abstract or early prose before related work and references."""
-    abstract, opening = [], []
-    for block in blocks[:40]:
-        text = block['text'].strip()
-        if len(text) < 24:
-            if opening and text.casefold() in ('references', 'bibliography', '參考文獻'):
-                break
-            continue
-        place = (block['anchor'], text[:2000])
-        if 'abstract' in block['anchor'].casefold():
-            abstract.append(place)
-        if len(opening) < 5:
-            opening.append(place)
-    return (abstract[:4] or opening[:3]), opening
-
-
 def _library_candidates(conn, focal_id, focal_identities):
     if not conn.execute("SELECT 1 FROM sqlite_master WHERE name='library_records'").fetchone():
-        return [], [], {}
+        return [], [], set()
     records = defaultdict(list)
     for row in conn.execute("""SELECT category,payload FROM library_records
                              WHERE category IN ('source','starter','concept') ORDER BY category,id"""):
@@ -188,7 +173,7 @@ def _library_candidates(conn, focal_id, focal_identities):
     linked = defaultdict(set)
     for row in conn.execute('SELECT d.source_id,i.id,i.key FROM library_documents d JOIN items i ON i.id=d.item_id'):
         linked[row['source_id']].update({('item', row['id']), ('key', row['key'].casefold())})
-    candidates, focal_tags, tags = [], [], {}
+    candidates, focal_tags, tags = [], [], set()
     for card in records['source']:
         sid = card['id']
         title = card['title']
@@ -196,7 +181,7 @@ def _library_candidates(conn, focal_id, focal_identities):
         topics = tuple(card.get('topics', ()))
         for label in (*topics, *concept_tags[sid]):
             if 3 <= len(label) <= 24 and re.fullmatch(r'[\u3400-\u9fff]+', label):
-                tags[label] = _phrase((label,))
+                tags.add(label)
         if identities & focal_identities or ('item', focal_id) in identities:
             focal_tags.extend((*topics, *concept_tags[sid]))
             focal_identities.update(identities)
@@ -229,14 +214,16 @@ def _read_candidates(conn, focal_id):
     """, (focal_id,))
     for row in rows:
         blocks = json.loads(row['blocks_json'])
-        primary, _ = _blocks(blocks)
+        primary, methods = subject_blocks(blocks)
+        primary = tuple((anchor, passage) for anchor, text in (*primary, *methods)
+                        for passage in stated_passages(text))
         terms = tuple((text, 2) for _, text in primary)
         href = reading_url(row['item_id'], row['id'], row['reading_anchor'] or '')
-        evidence_hrefs = tuple(reading_url(row['item_id'], row['id'], anchor)
-                               if SAFE_ANCHOR_RE.fullmatch(anchor) else href for anchor, _ in primary)
+        evidence_hrefs = (*(reading_url(row['item_id'], row['id'], anchor)
+                            if SAFE_ANCHOR_RE.fullmatch(anchor) else href for anchor, _ in primary), href)
         yield _Candidate('read', row['title'], href,
                          _publication_key(row['key'], row['source_url'], row['title']) | {('item', row['item_id'])},
-                         ((row['title'], 4), *terms), tuple(text for _, text in primary) or (row['title'],),
+                         ((row['title'], 4), *terms), (*(text for _, text in primary), row['title']),
                          evidence_hrefs)
 
 
@@ -299,7 +286,7 @@ def _related_terms(left, right):
 
 
 def _matches(focus, candidate, counts, tags):
-    names = _PHRASES.keys() | tags.keys()
+    names = _PHRASES.keys() | tags
     shared = focus.keys() & candidate.keys()
     scored = []
     for label in shared:
@@ -338,8 +325,8 @@ def _window(text, match, limit):
     return ('…' if start else '') + selection.strip() + ('…' if len(text) > stop else '')
 
 
-def _excerpt(snippets, match, tags):
-    pattern = _PHRASES.get(match) or tags.get(match) or _phrase((match,))
+def _excerpt(snippets, match):
+    pattern = _PHRASES.get(match) or _phrase((match,))
     parts = [(index, part.strip()) for index, snippet in enumerate(snippets)
              for part in re.split(r'[\n]+|(?<=[。！？!?])|(?<=\.)\s+', snippet) if part.strip()]
     if not parts:
@@ -348,17 +335,18 @@ def _excerpt(snippets, match, tags):
     return _window(line, match, 236), index
 
 
-def _reason(kind, match, title_focus, excerpt, tags):
+def _reason(kind, match, title_focus, excerpt, shared_domains):
     context = next((label for label in title_focus if not _related_terms(label, match)), match)
-    pattern = _PHRASES.get(match) or tags.get(match) or _phrase((match,))
+    pattern = _PHRASES.get(match) or _phrase((match,))
     clauses = [part.strip() for part in re.split(r'[，；：]', excerpt) if part.strip()]
     clause = next((part for part in clauses if len(part) > len(match) + 5
                    and pattern.search(_normalize(part))), excerpt)
     clause = clause.strip('「」…。？！.!? ')
     cap = 48 if re.search(r'[\u3400-\u9fff]', clause) else 86
     quotation = f'「{_window(clause, match, cap)}」' if clause else ''
-    lead = f'讀這篇時，從「{context}」切入'
-    bridge = f'對照「{match}」' if context != match else '作為對照'
+    lead = (f'兩篇都涉及 {"、".join(shared_domains)}，從「{match}」切入'
+            if shared_domains else f'讀這篇時，從「{context}」切入')
+    bridge = f'對照「{match}」' if context != match and not shared_domains else '作為對照'
     if kind == 'question':
         return f'{lead}，可帶著你先前的待查或提問{quotation}查對原文。'
     if kind == 'understanding':
@@ -385,13 +373,18 @@ def recommend(store, item, version):
             (item['id'], version['id']))]
     for label in explicit:
         if 3 <= len(label) <= 24 and re.fullmatch(r'[\u3400-\u9fff]+', label):
-            tags.setdefault(label, _phrase((label,)))
+            tags.add(label)
     focal_tags.extend(explicit)
-    primary, opening = _blocks(version.get('blocks', []))
+    primary, methods = subject_blocks(version.get('blocks', []))
     focus = _weights(((title, 5), (' '.join(focal_tags), 4),
-                      *((text, 3) for _, text in primary),
-                      *((text, 1) for _, text in opening)), tags)
-    profiles = [(candidate, _weights(candidate.fields, tags)) for candidate in candidates
+                      *((passage, 3) for _, text in (*primary, *methods)
+                        for passage in stated_passages(text))), tags)
+    focus_domains = related_domains(title, (text for _, text in (*primary, *methods)))
+    # Ranking only compares terms on both sides. Keep all possible matches
+    # while skipping catalogue aliases absent from the current article.
+    shared_tags = tags & focus.keys()
+    shared_aliases = tuple((label, pattern) for label, pattern in _PHRASES.items() if label in focus)
+    profiles = [(candidate, _weights(candidate.fields, shared_tags, shared_aliases)) for candidate in candidates
                 if not candidate.identities.intersection(identities)]
     counts = Counter(label for _, terms in profiles for label in terms.keys() & focus.keys())
     ranked = []
@@ -400,20 +393,24 @@ def recommend(store, item, version):
         score = sum(weight for weight, _ in matches)
         if score < 4:
             continue
-        ranked.append((score * _KIND_WEIGHT.get(candidate.kind, 1), candidate, matches[0][1]))
+        candidate_domains = related_domains(candidate.title, candidate.snippets)
+        shared_domains = tuple(label for label in focus_domains if label in candidate_domains)
+        match = matches[0][1]
+        weight = _KIND_WEIGHT.get(candidate.kind, 1) + .07 * bool(shared_domains)
+        ranked.append((score * weight, candidate, match, shared_domains))
     normalized_title = _normalize(title)
     title_terms = [(label, hit.end() - hit.start()) for label, pattern in _PHRASES.items()
                    if (hit := pattern.search(normalized_title))]
     title_focus = [label for label, _ in sorted(title_terms, key=lambda row: (-row[1], row[0]))]
     recommended = []
-    for _, candidate, match in sorted(ranked, key=lambda row: (-row[0], row[1].title.casefold(), row[1].href)):
+    for _, candidate, match, shared_domains in sorted(ranked, key=lambda row: (-row[0], row[1].title.casefold(), row[1].href)):
         if candidate.identities.intersection(identities):
             continue
         identities.update(candidate.identities)
-        excerpt, index = _excerpt(candidate.snippets, match, tags)
+        excerpt, index = _excerpt(candidate.snippets, match)
         href = candidate.evidence_hrefs[index] if candidate.evidence_hrefs else candidate.href
         recommended.append({'kind': candidate.kind, 'title': candidate.title, 'href': href,
-                            'reason': _reason(candidate.kind, match, title_focus, excerpt, tags),
+                            'reason': _reason(candidate.kind, match, title_focus, excerpt, shared_domains),
                             'excerpt': excerpt})
         if len(recommended) == 4:
             break

@@ -130,6 +130,29 @@ class KnowledgeRecallTest(unittest.TestCase):
         self.assertEqual(rows[0]['kind'], 'question')
         self.assertIn('需要兩次量測嗎', rows[0]['reason'])
 
+    def test_domain_and_specific_method_recall_explains_shared_method(self):
+        focal, version = self.paper(100, 'World models for autonomous driving',
+                                    'We train an action-conditioned dynamics model for trajectory prediction.')
+        old, old_version = self.paper(101, 'Trajectory prediction for self-driving vehicles',
+                                      'We use action-conditioned dynamics to predict future trajectories.')
+        self.store.set_item_status(old['id'], 'read')
+        note, note_version = self.paper(102, 'Planning in autonomous driving',
+                                        'We evaluate planning through simulations.')
+        note_id = self.store.add_note(note['id'], note_version['id'], 'p1',
+                                      '動作條件式動態模型能否預測未見過的行車場景？')['id']
+        question, question_version = self.paper(103, 'Robot planning',
+                                                'We study policies for an industrial robot.')
+        self.store.add_note(question['id'], question_version['id'], 'p1',
+                            '#盲點/待查\n動作條件式動態模型需要預測多遠？')
+        broad, _ = self.paper(104, 'Autonomous driving', 'We report a new dataset with many evaluation scenarios.')
+        self.store.set_item_status(broad['id'], 'read')
+        rows = {row['kind']: row for row in recommend(self.store, focal, version)}
+        self.assertEqual(set(rows), {'read', 'note', 'question'})
+        self.assertEqual(rows['note']['href'], reading_url(note['id'], note_version['id'], f'note-{note_id}'))
+        self.assertIn('自動駕駛', rows['read']['reason'])
+        self.assertIn('動作條件式動態模型', rows['question']['reason'])
+        self.assertIn('需要預測多遠', rows['question']['excerpt'])
+
     def test_generic_words_do_not_create_relationships(self):
         focal, version = self.paper(100, 'A novel AI model',
                                    'Our framework shows high performance and uses several methods and a new dataset.')

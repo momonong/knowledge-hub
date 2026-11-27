@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 108 108">
+  <style>
+    .pages { fill: #285B77; }
+    @media (prefers-color-scheme: dark) { .pages { fill: #90BCD2; } }
+  </style>
+  <g class="pages" transform="translate(-24 -18) scale(1.45)">
+    <path d="M25,43 Q25,40 28,41 L48,47 Q52,48 51,53 L47,78 L27,73 Q25,72 25,70 Z"/>
+    <path d="M51,78 L56,42 Q57,37 62,34 L80,23 Q83,21 83,25 L83,66 Q83,69 80,70 Z"/>
+  </g>
+</svg>

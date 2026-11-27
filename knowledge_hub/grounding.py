@@ -21,6 +21,10 @@ MAX_CATALOG_TEXT = 9600
 MAX_SECTION_TEXT = 2200
 _GUIDE_FORMAT = 2
 _VALUE = r'[+-]?\d+(?:,\d{3})*(?:\.\d+)?'
+_FACTOR = re.compile(
+    rf'\bby (?:a |the )?factor of\s+({_VALUE})(?=\s*(?:$|[;:)]|[.,](?!\d)|'
+    r'\b(?:compared|relative|versus|over|across|on|under|when|for|and)\b))', re.I,
+)
 _MEASURE = re.compile(
     rf'(?<![a-z0-9_.])({_VALUE})(?:\s*(?:--?|–|—|→|~|to|至|到)\s*({_VALUE}))?\s*({_MEASURE_UNIT})', re.I,
 )
@@ -55,6 +59,7 @@ def _digest(value):
 def _measures(text):
     values = set()
     plain = unicodedata.normalize('NFKC', _plain_math(text)).casefold().replace('−', '-')
+    plain = _FACTOR.sub(r'\1×', plain)
     for first, last, unit in _MEASURE.findall(plain):
         for value in (first,last):
             if value:

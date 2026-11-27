@@ -24,7 +24,7 @@ from .sources import (
 )
 from .store import KnowledgeStore
 from .library import KnowledgeLibrary
-from . import article_media, discovery, hive_reader, library_views, local_study, project_context, visuals
+from . import article_media, discovery, hive_reader, library_views, local_study, visuals
 from . import pdf_evidence
 from .editions import ArticleEditions, failure_code
 from . import qa, lessons, connections, connection_views, teaching, learning, study, study_views, reading, reader_views, daily
@@ -68,17 +68,12 @@ FULLTEXT_STATUS_LABELS = {
 
 STYLESHEET = """
 :root {
-    --bg-paper: #fbf8f1;
-    --bg-card: #f3ede0;
-    --bg-subtle: #ebe3d2;
-    --ink: #1d2324;
-    --ink-muted: #4a5456;
-    --teal: #0f5c63;
-    --teal-dark: #094146;
-    --teal-tint: #dcecee;
-    --border: #cfc5b1;
-    --warn-bg: #f9ebe7;
-    --warn-ink: #7d2319;
+    --bg-paper: var(--ground);
+    --bg-card: var(--raised);
+    --bg-subtle: var(--surface);
+    --ink-muted: var(--muted);
+    --warn-bg: var(--warning-tint);
+    --warn-ink: var(--warning);
 }
 *, *::before, *::after {
     box-sizing: border-box;
@@ -88,26 +83,25 @@ html, body {
     padding: 0;
     background-color: var(--bg-paper);
     color: var(--ink);
-    font-family: system-ui, -apple-system, "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif;
+    font-family: var(--body-font);
     line-height: 1.65;
-    overflow-x: hidden;
+    overflow-wrap: anywhere;
 }
 a {
-    color: var(--teal);
+    color: var(--accent);
     text-decoration: underline;
     text-underline-offset: 2px;
 }
 a:hover {
-    color: var(--teal-dark);
+    color: var(--accent-hover);
 }
 a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible, summary:focus-visible {
-    outline: 2px solid var(--teal);
+    outline: 2px solid var(--accent);
     outline-offset: 2px;
 }
 .topbar {
-    border-bottom: 1px solid var(--border);
-    background-color: var(--bg-card);
-    padding: 0.65rem 1rem;
+    border-bottom: 1px solid var(--rule);
+    padding: .75rem var(--page-gutter);
 }
 .topbar-inner {
     max-width: 960px;
@@ -116,24 +110,74 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
     flex-wrap: wrap;
     align-items: center;
     justify-content: space-between;
-    gap: 0.5rem 1rem;
+    gap: 0 1.5rem;
 }
 .brand {
-    font-weight: 700;
-    font-size: 1.05rem;
+    display: inline-flex;
+    align-items: center;
+    gap: .5rem;
+    min-height: 44px;
+    font: 700 1.3rem/1.2 var(--display-font);
     color: var(--ink);
     text-decoration: none;
 }
 .nav-links {
     display: flex;
     flex-wrap: wrap;
-    gap: 0.85rem;
-    font-size: 0.92rem;
+    gap: 0 1rem;
+    font-size: .875rem;
+}
+.nav-links a:not([hidden]) {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+    text-decoration: none;
+}
+.nav-links a:hover { text-decoration: underline; }
+.library-tools { display: none; }
+/* The installed reader supplies the three primary destinations in Android chrome. */
+[data-native-reader] .topbar { padding-block: 0; }
+[data-native-reader] .topbar-inner { display: block; position: relative; }
+[data-native-reader] .topbar .brand {
+    min-height: 52px;
+    max-width: calc(100% - 5rem);
+    font-size: 1.125rem;
+}
+[data-native-reader] .topbar .kh-book { width: 26px; height: 26px; }
+[data-native-reader] .topbar .nav-links { display: none; }
+[data-native-reader] .library-tools { display: block; }
+.library-tools summary {
+    position: absolute;
+    inset: 0 0 auto auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: .4rem;
+    min-height: 52px;
+    min-width: 48px;
+    cursor: pointer;
+    color: var(--accent);
+}
+.library-tools summary::after {
+    content: "";
+    width: .45em;
+    height: .45em;
+    border: solid currentColor;
+    border-width: 0 1.5px 1.5px 0;
+    transform: rotate(45deg);
+}
+.library-tools[open] summary::after { transform: rotate(225deg); }
+.library-tools nav { display: flex; flex-wrap: wrap; gap: 0 1.2rem; border-top: 1px solid var(--border); }
+.library-tools nav a { display: inline-flex; align-items: center; min-height: 48px; text-decoration: none; }
+[data-native-reader] .container { padding-top: 1rem; }
+[data-native-reader] .container :is(.btn, button, input[type="text"], input[type="search"], select) {
+    min-height: 48px;
+    font-size: 1rem;
 }
 .container {
     max-width: 960px;
     margin: 0 auto;
-    padding: 1.25rem 1rem 3rem;
+    padding: clamp(1.75rem, 4vw, 3.5rem) var(--page-gutter) 3rem;
 }
 .hero-header {
     display: flex;
@@ -141,19 +185,21 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
     align-items: baseline;
     justify-content: space-between;
     gap: 0.75rem;
-    border-bottom: 2px solid var(--ink);
-    padding-bottom: 0.6rem;
-    margin-bottom: 1.25rem;
+    border-bottom: 1px solid var(--rule);
+    padding-bottom: 1rem;
+    margin-bottom: 1.4rem;
 }
-.hero-header h1 {
-    font-size: 1.5rem;
+.container h1 {
+    font: 700 clamp(1.65rem, 3.5vw, 2.45rem)/1.3 var(--display-font);
     margin: 0;
 }
 .btn {
-    display: inline-block;
-    background-color: var(--teal);
-    color: #ffffff;
-    border: 1px solid var(--teal-dark);
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+    background-color: var(--accent);
+    color: var(--on-accent);
+    border: 1px solid var(--accent-hover);
     border-radius: 4px;
     padding: 0.42rem 0.85rem;
     font-size: 0.92rem;
@@ -162,17 +208,17 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
     text-decoration: none;
 }
 .btn:hover {
-    background-color: var(--teal-dark);
-    color: #ffffff;
+    background-color: var(--accent-hover);
+    color: var(--on-accent);
 }
 .btn-secondary {
     background-color: var(--bg-paper);
-    color: var(--teal-dark);
-    border: 1px solid var(--teal);
+    color: var(--accent-hover);
+    border: 1px solid var(--accent);
 }
 .btn-secondary:hover {
-    background-color: var(--teal-tint);
-    color: var(--teal-dark);
+    background-color: var(--accent-tint);
+    color: var(--accent-hover);
 }
 .pick-list {
     list-style: none;
@@ -197,8 +243,8 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
     display: inline-block;
     padding: 0.1rem 0.45rem;
     border-radius: 3px;
-    background-color: var(--teal-tint);
-    color: var(--teal-dark);
+    background-color: var(--accent-tint);
+    color: var(--accent-hover);
     font-weight: 600;
     font-size: 0.8rem;
 }
@@ -217,14 +263,14 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 }
 .pick-reason {
     font-size: 0.88rem;
-    color: var(--teal-dark);
+    color: var(--accent-hover);
     margin: 0.25rem 0;
 }
 .pick-excerpt {
     font-size: 0.94rem;
     color: var(--ink);
     background-color: var(--bg-card);
-    border-left: 3px solid var(--teal);
+    border-left: 3px solid var(--accent);
     padding: 0.45rem 0.7rem;
     margin: 0.4rem 0 0;
     overflow-wrap: break-word;
@@ -232,18 +278,17 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 }
 .panel-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 17.5rem), 1fr));
     gap: 1rem;
     margin-bottom: 1.5rem;
 }
 .panel {
     background-color: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    padding: 0.9rem 1rem;
+    border-top: 1px solid var(--rule);
+    padding: 1rem;
 }
 .panel h2 {
-    font-size: 1.05rem;
+    font: 700 1.2rem/1.4 var(--display-font);
     margin: 0 0 0.6rem;
 }
 .learning-path, #learning-comparison, .connection-tools {
@@ -298,9 +343,10 @@ input[type="text"], input[type="url"], input[type="search"], select, textarea {
     width: 100%;
     max-width: 100%;
     padding: 0.42rem 0.55rem;
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    background-color: #ffffff;
+    min-height: 44px;
+    border: 1px solid var(--control);
+    border-radius: 5px;
+    background-color: var(--raised);
     color: var(--ink);
     font-size: 0.94rem;
     font-family: inherit;
@@ -348,7 +394,7 @@ input[type="text"], input[type="url"], input[type="search"], select, textarea {
     padding: 0.65rem 0.85rem;
     border-radius: 4px;
     background-color: var(--bg-card);
-    border-left: 4px solid var(--teal);
+    border-left: 4px solid var(--accent);
     margin-bottom: 1rem;
     font-size: 0.92rem;
 }
@@ -361,9 +407,10 @@ input[type="text"], input[type="url"], input[type="search"], select, textarea {
     .panel-grid {
         grid-template-columns: 1fr;
     }
-    .container {
-        padding: 0.9rem 0.75rem 2rem;
-    }
+    .topbar { padding-block: .45rem 0; }
+    .topbar .brand { flex-basis: 100%; }
+    .nav-links { column-gap: .8rem; font-size: .8125rem; }
+    .container { padding-bottom: 2rem; }
 }
 """
 
@@ -472,19 +519,26 @@ def _layout(title: str, csrf_token: str, body_html: str) -> str:
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{_e(title)} — Knowledge Hub</title>
+<link rel="icon" sizes="any" href="/static/book.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/static/palette.css">
 <style>{STYLESHEET}</style>
 </head>
 <body>
 <header class="topbar">
   <div class="topbar-inner">
-    <a class="brand" href="/">Knowledge Hub 本機知識閱讀器</a>
+    <a class="brand" href="/"><img class="kh-book" src="/static/book.svg" alt="" width="32" height="32">Knowledge Hub</a>
     <nav class="nav-links" aria-label="主要導覽">
       <a href="/">今日精選</a>
+      <a href="/reading" hidden>接續與理解</a>
       <a href="/search">搜尋知識庫</a>
       <a href="/lessons">學習包</a>
       <a href="/library">初始知識庫</a>
       <a href="/export.json">匯出 JSON</a>
     </nav>
+    <details class="library-tools">
+      <summary>工具</summary>
+      <nav aria-label="知識庫工具"><a href="/search">搜尋</a><a href="/lessons">學習包</a><a href="/manage">管理</a><!--kh-device-menu--></nav>
+    </details>
   </div>
 </header>
 <main class="container">
@@ -513,12 +567,10 @@ def create_app(
     reading_state = reading.ReadingState(store)
     local_reader = local_study.LocalStudy(store)
     daily_refresh = daily.DailyRefresh(store)
+    public_domains = discovery.make_public_domain_cache()
     raw_fetcher = fetch if fetch is not None else default_fetch
     visual_slots = BoundedSemaphore(4)
     media_root = Path(article_media_root) if article_media_root is not None else Path(db_path).parent/'article-media'/'hive-mem-v1'
-
-    def projects():
-        return project_context.current(store, project_root, public_projects=public_projects)
 
     def safe_fetch(url: str) -> bytes:
         limit = fetch_response_limit(url)
@@ -760,7 +812,7 @@ def create_app(
     def _render_item_page(item: dict, active_version: dict, focus='', *, study_error='', study_form=None) -> str:
         from .knowledge_recall import recommend
 
-        context = connection_service.build_context(item['id'], active_version['id'], focus)
+        context = connection_service.build_context(item['id'], active_version['id'], focus, for_reader=True)
         context['source_turns'] = local_reader.turns(item['id'], active_version['id'])
         context['followups'] = followups.history(item['id'], active_version['id'])
         context['captures'] = captures.list(item['id'], active_version['id'])
@@ -1294,14 +1346,11 @@ def create_app(
         freshly_built = set()
 
         def collect():
-            if public_projects:
-                project_context.refresh_public_projects(store, safe_fetch)
             feeds.collect(store, safe_fetch, day)
             picks = daily_refresh.selection(day,resolved=False)
             if len(picks) == daily.PICK_COUNT:
                 return picks
-            active, _ = projects()
-            pool = discovery.rank(store, active, limit=daily.PICK_COUNT,
+            pool = discovery.rank(store, limit=daily.PICK_COUNT,
                                   exclude_keys=daily_refresh.recent_keys(day,include_today=True))
             categories = Counter(pick.get('category') for pick in picks)
             for ranked in pool:
@@ -1428,7 +1477,7 @@ def create_app(
                 return _respond(start_response, '200 OK', json.dumps(result, ensure_ascii=False).encode(),
                                 'application/json; charset=utf-8')
             if layered[2] == 'guide' and method == 'GET':
-                from .guided import guide as reading_guide
+                from .guided import guide as reading_guide, portable_lesson
                 route = query_params.get('route', ['primary'])[-1]
                 if route not in ('primary', 'fallback'):
                     return _error_page(start_response, 400, 'Bad Request', '帶讀模型路由無效。')
@@ -1446,6 +1495,8 @@ def create_app(
                                       route=route,
                                       retry=query_params.get('retry') == ['1'])
                 guide['visuals_ready'] = bool(panels and panels.get('panels'))
+                if query_params.get('view') == ['lesson']:
+                    guide = portable_lesson(guide)
                 return _respond(start_response, '200 OK', json.dumps(guide, ensure_ascii=False).encode(),
                                 'application/json; charset=utf-8')
             if layered[2] == 'followup' and method == 'POST':
@@ -1468,11 +1519,12 @@ def create_app(
             visual_match = VISUAL_ROUTE_RE.fullmatch(path)
             if visual_match:
                 return _serve_visuals(visual_match, query_params, start_response)
-            if path in ('/static/reader.css', '/static/briefing.css', '/static/room.css',
+            if path in ('/static/palette.css', '/static/book.svg', '/static/reader.css', '/static/briefing.css', '/static/room.css',
                         '/static/reading-actions.css', '/static/reader.js', '/static/layers.js'):
                 filename = path.rsplit('/', 1)[1]
                 data = (Path(__file__).parent / 'static' / filename).read_bytes()
-                mime = 'text/css; charset=utf-8' if filename.endswith('.css') else 'text/javascript; charset=utf-8'
+                types = {'.css': 'text/css', '.js': 'text/javascript', '.svg': 'image/svg+xml'}
+                mime = types[Path(filename).suffix] + '; charset=utf-8'
                 return _respond(start_response, '200 OK', data, mime)
             if path == '/reading':
                 page = query_params.get('page', ['1'])[-1]
@@ -1513,11 +1565,11 @@ def create_app(
                 today = daily_refresh.day()
                 selected_day = daily_refresh.latest_day()
                 picks = daily_refresh.selection(selected_day) if selected_day else []
+                picks = discovery.classify_cached_picks(store, picks, public_domains)
                 status = daily_refresh.status()
-                active_projects, project_mode = project_context.current(store, public_projects=public_projects)
                 return _respond(start_response, "200 OK", reader_views.home(
                     store, library, reading_state, store.get_csrf_token(), status, picks=picks,
-                    selected_day=selected_day, today=today, active_projects=active_projects, project_mode=project_mode).encode("utf-8"))
+                    selected_day=selected_day, today=today).encode("utf-8"))
 
             if path == '/discovery/status':
                 from . import daily_views

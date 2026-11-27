@@ -6,7 +6,8 @@ from urllib.parse import unquote
 
 from . import hive_guide, hive_reader, learning, study_views, visuals
 from .connections import reading_url
-from .sources import HF_FEED_LABEL
+from .domains import article_domains
+from .sources import HF_FEED_LABEL, SAFE_ANCHOR_RE
 from .study_views import e, hidden
 
 SCOPE = {'full': '全文文字', 'partial': '部分原文', 'abstract': '僅有摘要', 'unavailable': '原文待取得'}
@@ -23,14 +24,16 @@ def shell(title, csrf, body, active='today', *, styles=()):
                   for url, label, key in links)
     page_styles = ''.join(f'<link rel="stylesheet" href="/static/{e(name)}.css">' for name in styles)
     return f'''<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8">
-      <meta name="viewport" content="width=device-width, initial-scale=1">
-      <title>{e(title)} — Knowledge Hub</title><link rel="stylesheet" href="/static/reader.css">{page_styles}
+      <meta name="viewport" content="width=device-width, initial-scale=1, interactive-widget=resizes-content">
+      <title>{e(title)} — Knowledge Hub</title><link rel="icon" sizes="any" href="/static/book.svg" type="image/svg+xml">
+      <link rel="stylesheet" href="/static/palette.css"><link rel="stylesheet" href="/static/reader.css">{page_styles}
       <script src="/static/reader.js" defer></script><script src="/static/layers.js" defer></script></head><body>
-      <header class="app-header"><div class="header-inner"><a class="wordmark" href="/" aria-label="Knowledge Hub 首頁">
-      <svg width="28" height="28" viewBox="0 0 28 28" aria-hidden="true"><path d="M4 5h8l2 3 2-3h8v18h-8l-2-3-2 3H4zM14 8v12" fill="none" stroke="currentColor" stroke-width="1.7"/></svg>Knowledge Hub</a>
+      <header class="app-header"><div class="header-inner"><a class="wordmark" href="/">
+      <img class="kh-book" src="/static/book.svg" alt="" width="32" height="32">
+      <span class="reader-web-only">Knowledge Hub</span><span class="reader-native-only">研讀手記</span></a>
       <nav aria-label="主要導覽">{nav}</nav><a class="utility" href="/manage">管理</a></div></header>
       <main class="workspace"><input type="hidden" id="page-csrf" name="csrf" value="{e(csrf)}">{body}</main>
-      <footer class="app-footer">閱讀、提問與理解，接著往下走。<a href="/export.json">匯出我的資料</a></footer></body></html>'''
+      <footer class="app-footer"><span class="reader-web-only">閱讀、提問與理解，接著往下走。</span><a class="reader-web-only" href="/export.json">匯出我的資料</a></footer></body></html>'''
 
 
 def date_label(value):
@@ -87,7 +90,35 @@ def continuation_links(row):
     return href, preview or '閱讀位置已保留。', original
 
 
-def home(store, library, reading, csrf, daily_status=None, *, picks=(), active_projects=(), project_mode=None, selected_day=None, today=None):
+def domain_summary(domains):
+    if not domains:
+        return ''
+    labels = '、'.join(f'<span title="{e(evidence)}">{e(label)}</span>'
+                      for label, evidence in domains.items())
+    return f'<p class="meta" data-related-domains><strong>相關領域</strong> {labels}</p>'
+
+
+def source_outline(blocks):
+    """Link to section headings retained from the selected source version."""
+    anchors = {block['anchor'] for block in blocks}
+    links = []
+    for block in blocks:
+        anchor, text = block['anchor'], ' '.join(block['text'].split())
+        abstract = anchor == 'abstract'
+        section = anchor + '.p1' in anchors or re.fullmatch(r'S[0-9]+(?:\.S+[0-9]+)*', anchor)
+        if not SAFE_ANCHOR_RE.fullmatch(anchor) or not (abstract or section and 0 < len(text) <= 140):
+            continue
+        label = '摘要' if abstract else text
+        links.append(f'<li><a href="#{e(anchor)}">{e(label)}</a></li>')
+        if len(links) == 24:
+            break
+    if not links:
+        return ''
+    return ('<details class="source-outline reader-native-only"><summary>章節目錄</summary>'
+            '<ul>' + ''.join(links) + '</ul></details>')
+
+
+def home(store, library, reading, csrf, daily_status=None, *, picks=(), selected_day=None, today=None):
     from .daily_views import story
 
     display_day = selected_day or today or datetime.now(timezone(timedelta(hours=8))).date().isoformat()
@@ -145,16 +176,6 @@ def home(store, library, reading, csrf, daily_status=None, *, picks=(), active_p
     parts.append(f'<p class="meta">{e(freshness)}</p>')
     if daily_status and daily_status.get('error'):
         parts.append(f'<p>{e(daily_status["error"])}</p>')
-    if active_projects:
-        mode = ('近期專案取自本機 Git 活動。' if project_mode == 'local' else
-                '近期專案取自 GitHub 公開主題和推送紀錄。')
-        parts.append(f'<p>{mode}</p><ul>')
-        for project in active_projects:
-            parts.append(f'<li>{e(project["name"])} <span class="meta">{e(date_label(project["active_at"]))}</span></li>')
-        parts.append('</ul>')
-    elif project_mode in ('snapshot', 'unavailable') and not any(
-            reason.get('kind') == 'project' for pick in picks for reason in pick.get('reasons', ())):
-        parts.append('<p>目前依閱讀與問題選文。</p>')
     parts.append('</details><details class="briefing-rail-section"><summary>補讀基礎</summary>')
     mappings = [dict(d, source_id=s['id']) for s in library.list_sources(starter_only=True) for d in s['documents']]
     items = {d['item_id'] for d in mappings}
@@ -307,6 +328,8 @@ def detail(item, version, context, service, reading, csrf, safe_href, *, error='
     latest = complete[-1] if complete else None
     visual_source = visuals.paper_url(item['key'], version['label'])
     has_hive_guide = visual_source == hive_reader.PAPER
+    title = version.get("title") or item["title"]
+    domains = article_domains(title, version["blocks"])
     context_error = ''
     try:
         public_context = service.context(item_id, version_id)
@@ -318,12 +341,14 @@ def detail(item, version, context, service, reading, csrf, safe_href, *, error='
              f'data-revision="{state["revision"]}" data-tab="{e(state["tab"])}" data-anchor="{e(state["anchor"])}" '
              f'data-reading-scope="{e(version["scope"])}" id="reader-start">',
              '<a class="back-link" href="/">← 回到今天的閱讀</a>',
-             f'<header class="reader-heading"><h1>{e(version.get("title") or item["title"])}</h1>'
-             f'<p class="meta">{e(date_label(version["published_at"]))} · {e(version["label"])} · {e(SCOPE[version["scope"]])}</p></header>',
+             f'<header class="reader-heading"><h1>{e(title)}</h1>'
+             f'<p class="meta">{e(date_label(version["published_at"]))} · {e(version["label"])} · {e(SCOPE[version["scope"]])}</p>'
+             f'{domain_summary(domains)}</header>',
              '<div class="room-navigation"><div class="room-tabs" role="tablist" aria-label="閱讀內容">'
              '<button id="room-guide-tab" type="button" role="tab" aria-selected="true" data-tab-button="lesson" aria-controls="panel-lesson">導讀</button>'
              '<button id="room-source-tab" type="button" role="tab" aria-selected="false" data-tab-button="original" aria-controls="panel-original">原文</button>'
-             '</div><button class="room-tool" type="button" data-room-ask aria-controls="conversation" aria-expanded="false">追問</button></div>'
+             '</div><button class="room-tool" type="button" data-room-ask aria-controls="conversation" aria-expanded="false">追問</button>'
+             '<a class="room-tool room-notes-link reader-native-only" href="#study-save">筆記</a></div>'
              '<p class="room-save-status" role="status" data-room-save-status></p>']
     if error:
         parts.append(f'<p role="alert" class="notice warning">{e(error)} 輸入仍保留。</p>')
@@ -418,6 +443,7 @@ def detail(item, version, context, service, reading, csrf, safe_href, *, error='
             parts.append('<p class="notice">出版者全文暫時無法取得，目前顯示摘要。</p>')
         parts.append(f'<form method="post" action="/items/{item_id}/fetch" data-busy="正在取得同版原文…">{base}'
                      '<button class="button secondary" type="submit">取得全文與圖表</button></form>')
+    parts.append(source_outline(version['blocks']))
     for b in version['blocks']:
         parts.append(f'<section class="source-paragraph" id="{e(b["anchor"])}" tabindex="-1" data-position data-anchor="{e(b["anchor"])}">'
                      f'<p class="prose">{e(b["text"])}</p><a class="source-link" href="{safe_href(b.get("source_url") or version["source_url"])}" '

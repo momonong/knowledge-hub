@@ -23,14 +23,14 @@ class Hosted(unittest.TestCase):
             'arxiv:2601.00001', 'Protected paper title', 'Public article evidence.'))
 
     def request(self, path='/knowledge/', *, fields=None, allow=True, host='momonong.me',
-                origin='https://momonong.me', forwarded='https', peer='127.0.0.1', cookie=''):
+                origin='https://momonong.me', forwarded='https', peer='127.0.0.1', cookie='', user_agent=''):
         from knowledge_hub import hosting
         app = hosting.MountedApplication(create_app(self.db), origin='https://momonong.me',
                                          prefix='/knowledge', authorize=lambda env: allow)
         env = {}; setup_testing_defaults(env)
         parsed = urlsplit(path)
         env.update(PATH_INFO=parsed.path, QUERY_STRING=parsed.query, HTTP_HOST=host,
-                   HTTP_X_FORWARDED_PROTO=forwarded, REMOTE_ADDR=peer, HTTP_COOKIE=cookie)
+                   HTTP_X_FORWARDED_PROTO=forwarded, REMOTE_ADDR=peer, HTTP_COOKIE=cookie, HTTP_USER_AGENT=user_agent)
         if fields is not None:
             raw = urlencode({'csrf': self.store.get_csrf_token(), **fields}).encode()
             env.update(REQUEST_METHOD='POST', HTTP_ORIGIN=origin,
@@ -56,6 +56,22 @@ class Hosted(unittest.TestCase):
         response=self.request(allow=None)
         self.assertEqual(response['status'],503)
         self.assertNotIn('Protected paper title',response['body'])
+        self.assertIn('href="data:image/svg+xml,', response['body'])
+        self.assertNotIn('/sites/_icons/', response['body'])
+        self.assertIn('img-src data:', response['headers']['Content-Security-Policy'])
+
+    def test_native_navigation_markup_requires_the_exact_app_capability(self):
+        native = 'Mozilla/5.0 (Linux; Android) Chrome/130 KnowledgeHubAndroid/2'
+        path = f'/knowledge/items/{self.item}?version={self.version}'
+        for agent in (native, 'Android wv', native + '0', native.replace('/2', '/1')):
+            with self.subTest(agent=agent):
+                response = self.request(path, user_agent=agent)
+                self.assertEqual(response['status'], 200)
+                self.assertEqual(' data-native-reader>' in response['body'], agent == native)
+                self.assertIn('User-Agent', response['headers']['Vary'])
+                self.assertIn('Cookie', response['headers']['Vary'])
+                self.assertIn('href="/knowledge/reading"', response['body'])
+        self.assertEqual(self.request(path, user_agent=native, allow=False)['status'], 401)
 
     def test_all_internal_urls_are_mounted_but_article_text_is_unchanged(self):
         response=self.request(f'/knowledge/items/{self.item}?version={self.version}')

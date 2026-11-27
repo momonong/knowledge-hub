@@ -1,0 +1,4 @@
+<resources>
+    <color name="kh_launcher_background">@color/reader_window_background</color>
+    <color name="kh_brand_ink">#285B77</color>
+</resources>

@@ -1,0 +1,10 @@
+{
+  "relation": ["delegate_permission/common.get_login_creds"],
+  "target": {
+    "namespace": "android_app",
+    "package_name": "com.momonong.knowledgehub",
+    "sha256_cert_fingerprints": [
+      "E5:9D:19:5E:00:90:6A:48:A0:B2:75:CD:06:E1:22:99:86:2A:5D:A4:BE:CE:E2:54:79:FC:C7:C2:47:0A:4E:FE"
+    ]
+  }
+}
