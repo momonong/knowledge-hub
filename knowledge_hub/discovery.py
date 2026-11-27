@@ -2,12 +2,14 @@
 from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from functools import lru_cache
 import math
 import json
 import re
 
 from .connections import STOPWORDS, reading_url
 from .daily import attached_versions
+from .domains import article_domains, cacheable_public_abstract, related_domains, stated_passages, subject_blocks
 from .excerpts import preview, sentence_spans
 
 
@@ -20,7 +22,7 @@ THEMES = {
     'eval': ('評測與可靠性', r'benchmark|evaluation|calibration|reproducib|ablation|評估|評測|校準|消融|可重現|驗收'),
     'inference': ('推論資源與路由', r'\b(?:inference|quantiz\w*|token budget|model routing|gpu (?:kernels?|deployment|serving)|kv[ -]cache|speculative decoding|pagedattention|flashattention)\b|推論|模型路由|量化|序列解碼'),
     'vision': ('圖文與視覺理解', r'vision[ -]language|multi[ -]?modal|object tracking|visual evidence|computer vision|多模態|視覺|圖文'),
-    'robotics': ('機器人與世界模型', r'\b(?:robot(?:ics?)?|embodied ai|world[ -]models?|physical ai|robotic manipulation)\b|機器人|機械臂|具身|世界模型'),
+    'robotics': ('Robotics', r'\b(?:robot(?:ics?)?|embodied ai|physical ai|robotic manipulation)\b|機器人|機械臂|具身'),
     'audio': ('音訊與語音', r'speech|transcri|audio|whisper|語音|逐字稿|轉錄|音訊'),
     'finance': ('量化研究與回測', r'backtest|quantitative financ|market microstructure|portfolio|股票|回測|量化交易|投資組合|市場微結構'),
     'learning': ('教學與閱讀', r'knowledge hub|educational|tutoring|learning companion|scientific reading|教學|學習助理|學習流程|論文閱讀|圖表導讀'),
@@ -40,8 +42,8 @@ _TERM = re.compile(r'[a-z][a-z0-9_-]{2,35}|[\u3400-\u9fff]{2,}')
 _EVALUATION = re.compile(r'\b(?:benchmark|ablation|evaluation|dataset|baseline|experiments?|accuracy|latency|throughput)\w*\b|評測|準確率|消融|實驗|延遲', re.I)
 _QUANTITY = re.compile(r'\d+(?:\.\d+)?\s*(?:%|×|x\b|milliseconds?|ms\b|seconds?|tokens?|points?|examples?|tasks?|datasets?|benchmarks?|kernels?)', re.I)
 
-# Eligibility requires evidence of a technical subject. Project topic tags and
-# private history can change the order of eligible candidates.
+# Eligibility requires evidence of a technical subject. Private reading
+# history can change the order of eligible candidates.
 @dataclass(frozen=True)
 class Topic:
     category: str
@@ -72,11 +74,9 @@ _TOPICS = (
         r'(?:llm|model) (?:safety|faithfulness|hallucinations?)|hallucination (?:detection|mitigation)|'
         r'citation verifi\w*)\b|多代理|長期記憶|知識圖譜|神經符號|生成式檢索|工具呼叫|幻覺抑制', re.I),
         '可比較代理協作、記憶檢索或答案可靠性的做法', frozenset({'retrieval','memory','agent','privacy'})),
-    Topic('Physical AI 與世界模型', 'frontier', re.compile(
-        r'\b(?:world[ -]models?|physical ai|embodied (?:ai|agents?|learning|reasoning)|vision[ -]language[ -]action|'
-        r'vla (?:models?|policies)|robot(?:ic|ics)? (?:learning|control|polic\w*|manipulation|grasp\w*)|'
-        r'physical simulators?|interactive simulation|spatial reasoning)\b|世界模型|物理建模|空間推理|具身|機器人操作', re.I),
-        '可看模型如何表示環境、預測互動或規劃動作', frozenset({'robotics'})),
+    Topic('具身與空間推理', 'frontier', re.compile(
+        r'\b(?:embodied reasoning|physical simulators?|interactive simulation|spatial reasoning)\b|物理建模|空間推理', re.I),
+        '可看模型如何表示環境、預測互動或規劃動作', frozenset()),
     Topic('模型能力與訓練典範', 'frontier', re.compile(
         r'\b(?:data flywheels?|(?:automated|adaptive|iterative) data curation|training data mixtures?|'
         r'test[ -]time (?:scaling|training|adaptation)|long[ -]horizon reasoning|human[ -]ai collaboration|'
@@ -143,9 +143,22 @@ _PRODUCTION = re.compile(
     r'\b(?:in production|production (?:deployment|traffic|workloads?)|'
     r'deployed (?:at|to|on)|commercial rollout)\b', re.I)
 _BLIND_SPOT_TAG = '#盲點/待查'
+_DOMAIN_ANGLES = {
+    'Robotics': '可比較感知、控制或操作策略在不同任務上的取捨',
+    'World Models': '可檢查模型如何預測環境變化及支援後續規劃',
+    'AI Agents': '可比較代理如何呼叫工具、分工或處理失敗',
+    'RL': '可核對策略如何從回饋習得，以及評估使用的條件',
+    '自動駕駛': '可追蹤系統如何預測其他用路者、規劃軌跡或評估閉環表現',
+}
 
 
-def _spectrum(item, opening):
+def _domain_topic(label, quote):
+    axis = 'core' if label == 'AI Agents' else 'frontier'
+    topics = {'retrieval', 'memory', 'agent'} if label == 'AI Agents' else set()
+    return label, axis, f'「{quote}」對應{label}，{_DOMAIN_ANGLES[label]}。', frozenset(topics)
+
+
+def _spectrum(item, opening, domains):
     title = item['title']
     text = f'{title} {opening}'
     sentences = [opening[start:end] for start,end,_ in sentence_spans(opening)]
@@ -163,7 +176,8 @@ def _spectrum(item, opening):
         return None
 
     if _DOMAIN.search(text):
-        if not (any(_METHOD.search(sentence) and any(topic.pattern.search(sentence) for topic in _TOPICS)
+        if not (any(_METHOD.search(sentence) and (
+                    related_domains('', [sentence]) or any(topic.pattern.search(sentence) for topic in _TOPICS))
                     for sentence in contributions)
                 and any(_TRANSFER_VALIDATION.search(sentence) and _EXTERNAL_DOMAINS.search(sentence)
                         and not _TRANSFER_LIMIT.search(sentence) for sentence in sentences)):
@@ -182,6 +196,9 @@ def _spectrum(item, opening):
     # Prefer the title and then the authors' stated contribution. This avoids
     # treating a passing mention in the abstract as the primary subject.
     for passage in [title, *contributions]:
+        supported = {label: quote for label, quote in related_domains('', [passage]).items() if label in domains}
+        if supported:
+            return _domain_topic(*next(iter(supported.items())))
         matches = [(topic, match) for topic in _TOPICS if (match := topic.pattern.search(passage))]
         if matches:
             topic, match = min(matches, key=lambda pair: (
@@ -189,6 +206,9 @@ def _spectrum(item, opening):
                 pair[1].start(),
             ))
             return topic.category, topic.axis, f'「{match[0]}」對應{topic.category}，{topic.angle}。', topic.signal_topics
+
+    if domains:
+        return _domain_topic(*next(iter(domains.items())))
 
     trend = _TREND.search(text)
     if trend and _PRODUCTION.search(opening) and _QUANTITY.search(opening):
@@ -223,8 +243,8 @@ class Signal:
     vocabulary: frozenset
 
 
-def _signal(kind, title, href, text):
-    return Signal(kind,title,href,themes(text),terms(text))
+def _signal(kind, title, href, text, domains):
+    return Signal(kind, title, href, themes(text) | domains.keys(), terms(text))
 
 
 def _opening(blocks, limit=4500):
@@ -238,9 +258,8 @@ def _opening(blocks, limit=4500):
     return ' '.join(parts)
 
 
-def _signals(store, projects):
-    signals = [Signal('project', p['name'], '', frozenset(p['topics']), terms(p['name']))
-               for p in projects if not _DOMAIN.search(p['name'].replace('-', ' ').replace('_', ' '))]
+def _signals(store):
+    signals = []
     with store._connect() as db:
         reads = db.execute('''SELECT i.id AS item_id,v.id AS version_id,t.title,v.blocks_json,
             COALESCE(r.updated_at,i.updated_at) AS seen FROM items i JOIN item_versions v ON v.item_id=i.id
@@ -270,16 +289,19 @@ def _signals(store, projects):
         if row['item_id'] in seen:
             continue
         seen.add(row['item_id'])
-        text = row['title'] + ' ' + _opening(json.loads(row['blocks_json']), 2500)
+        primary, methods = subject_blocks(json.loads(row['blocks_json']))
+        passages = [body for _, body in (*primary, *methods)]
+        text = row['title'] + ' ' + ' '.join(passage for body in passages for passage in stated_passages(body))[:2500]
         if not _DOMAIN.search(text):
-            signals.append(_signal('reading',row['title'],reading_url(row['item_id'],row['version_id']),text))
+            signals.append(_signal('reading', row['title'], reading_url(row['item_id'], row['version_id']),
+                                   text, related_domains(row['title'], passages)))
     for row in questions:
         # Questions affect ranking locally. Their text never reaches UI evidence
         # snippets, the refresh fetcher, or a model payload.
         text = (row['text'] or '')[:2500]
         if text and not _DOMAIN.search(text):
             href = reading_url(row['item_id'],row['version_id'],row['anchor'])
-            signals.append(_signal('question',row['title'],href,text))
+            signals.append(_signal('question', row['title'], href, text, related_domains('', [text])))
     return signals, seen | {r['item_id'] for r in questions}
 
 
@@ -362,13 +384,48 @@ def _diverse(scored, limit):
     return [pick for _, _, key, _, pick in scored if key in chosen]
 
 
+def _domains_json(title, blocks_json):
+    return article_domains(title, json.loads(blocks_json))
+
+
+def make_public_domain_cache():
+    # Scoped to one app. The stored title and bytes are part of the cache key.
+    return lru_cache(maxsize=32)(_domains_json)
+
+
+def classify_cached_picks(store, picks, public_domains=None):
+    """Resolve domain evidence against the fixed edition shown on each cached card."""
+    version_ids = [pick['version']['id'] for pick in picks]
+    if not version_ids:
+        return picks
+    placeholders = ','.join('?' for _ in version_ids)
+    with store._connect() as db:
+        sources = {str(row['id']): row for row in db.execute(
+            f"""SELECT v.id,v.item_id,v.scope,i.key,i.source_name,t.title,v.blocks_json
+                  FROM item_versions v JOIN items i ON i.id=v.item_id
+                  JOIN version_titles t ON t.version_id=v.id WHERE v.id IN ({placeholders})""", version_ids)}
+    result = []
+    for pick in picks:
+        source = sources.get(str(pick['version']['id']))
+        domains = {}
+        if source and source['item_id'] == pick['item']['id']:
+            raw = source['blocks_json']
+            analyze = _domains_json
+            if public_domains is not None and cacheable_public_abstract(
+                    source['source_name'], source['key'], source['scope'], raw):
+                analyze = public_domains
+            domains = dict(analyze(source['title'], raw))
+        result.append({**pick, 'domains': domains})
+    return result
+
+
 def rank(store, projects=(), *, extra=(), limit=5, now=None, only_new=False, exclude_keys=()):
-    """Score without fetching, calling a model, or exposing private query text."""
+    """Score locally. The legacy projects argument is accepted but carries no ranking weight."""
     if limit <= 0:
         return []
     today = now or datetime.now(timezone.utc)
     earliest, latest = today-timedelta(days=45), today+timedelta(hours=36)
-    signals, seen = _signals(store, projects)
+    signals, seen = _signals(store)
     by_key = {} if only_new else {row['item']['key']:row for row in _pool(store,earliest,latest)}
     if extra:
         with store._connect() as db:
@@ -396,18 +453,20 @@ def rank(store, projects=(), *, extra=(), limit=5, now=None, only_new=False, exc
         if not date or not earliest <= date <= latest:
             continue
         blocks = version['blocks']
-        abstract = [block for block in blocks if block['anchor'] == 'abstract']
-        opening = _opening(abstract or blocks)
+        primary, methods = subject_blocks(blocks)
+        domains = related_domains(item['title'], (text for _, text in (*primary, *methods)))
+        opening = (' '.join(text for _, text in primary or methods)[:4500]
+                   if item['key'].startswith('arxiv:') else _opening(blocks))
         if not opening:
             continue
-        topic = _spectrum(item,opening)
+        topic = _spectrum(item, opening, domains)
         if not topic:
             continue
-        text = item['title'] + ' ' + opening
-        features.append((row,date,opening,topic,themes(text) & topic[3],terms(text)))
+        text = item['title'] + ' ' + ' '.join(stated_passages(opening))
+        features.append((row, date, opening, topic, domains, (themes(text) & topic[3]) | domains.keys(), terms(text)))
     counts = Counter(term for *_, vocabulary in features for term in vocabulary)
     scored = []
-    for row,date,opening,(category,axis,spectrum_reason,_),paper_themes,paper_terms in features:
+    for row,date,opening,(category,axis,spectrum_reason,_),domains,paper_themes,paper_terms in features:
         reasons = {}
         for signal in signals:
             shared = (paper_themes & signal.topics) - {'privacy'}
@@ -417,14 +476,14 @@ def rank(store, projects=(), *, extra=(), limit=5, now=None, only_new=False, exc
             useful = sorted((t for t in common if counts[t] <= max(2,len(features)*0.24)),key=lambda t:(counts[t],t))[:3]
             similarity = 3*len(shared) + sum(min(2,math.log2(1+len(features)/counts[t])/2) for t in useful)
             if signal.kind not in reasons or similarity > reasons[signal.kind][0]:
-                labels = [THEMES[t][0] for t in sorted(shared)[:2]]
+                labels = [THEMES[t][0] if t in THEMES else t for t in sorted(shared)[:2]]
                 reasons[signal.kind] = (similarity,{'kind':signal.kind,'title':signal.label,'href':signal.href,'matches':labels})
         evidence_strength, evidence = _evidence(opening)
-        score = sum(min(6, value[0]) / 3 * {'question':4,'project':3,'reading':2}[key] for key,value in reasons.items())
+        score = sum(min(6, value[0]) / 3 * {'question':4,'reading':2}[key] for key,value in reasons.items())
         score += 2*evidence_strength + max(0, 8-(today-date).days)/2
-        ordered = [reasons[k][1] for k in ('question','project','reading') if k in reasons]
+        ordered = [reasons[k][1] for k in ('question','reading') if k in reasons]
         scored.append((score,date,row['item']['key'],axis,{**row,'reasons':ordered,'evidence':evidence,
                       'evidence_strength':evidence_strength,'personalized':bool(ordered),
-                      'category':category,'spectrum_reason':spectrum_reason}))
+                      'category':category,'spectrum_reason':spectrum_reason,'domains':domains}))
     scored.sort(key=lambda x:x[:3],reverse=True)
     return _diverse(scored,limit)

@@ -1,0 +1,12 @@
+<resources>
+    <color name="reader_window_background">#F6F3E9</color>
+    <bool name="reader_light_system_bars">true</bool>
+
+    <style name="KnowledgeHubBaseTheme" parent="@android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/reader_window_background</item>
+        <item name="android:windowLightStatusBar">@bool/reader_light_system_bars</item>
+        <item name="android:statusBarColor">@color/reader_window_background</item>
+        <item name="android:navigationBarColor">#202524</item>
+    </style>
+    <style name="KnowledgeHubTheme" parent="KnowledgeHubBaseTheme" />
+</resources>

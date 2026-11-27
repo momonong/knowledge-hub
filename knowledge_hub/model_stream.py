@@ -146,10 +146,13 @@ def _request_payload(config, messages, response_schema=None, stream_sections=Fal
 def stream_model(
     config: ModelConfig, messages: list[dict], *, first_timeout: float = 15, total_timeout: float = 45,
     timing: dict | None = None, response_schema: dict | None = None, stream_sections: bool = False,
+    first_content_deadline: bool = False,
 ) -> Iterator[str]:
     """Yield JSON records, optionally decoding a structured document or L4 sections."""
 
     started = monotonic()
+    if first_content_deadline and (response_schema is None or stream_sections):
+        raise ModelStreamError("invalid_request")
     if any(type(value) not in (int, float) or not 0 < value <= limit
            for value, limit in ((first_timeout, 15), (total_timeout, 45))):
         raise ModelStreamError("invalid_request")
@@ -168,7 +171,7 @@ def stream_model(
     except (OSError, subprocess.SubprocessError):
         raise ModelStreamError("provider_unavailable") from None
     try:
-        yield from _read_worker(worker, request, first_deadline, deadline, timing, started)
+        yield from _read_worker(worker, request, first_deadline, deadline, timing, started, first_content_deadline)
     finally:
         # A socket or resolver in the worker can still be blocked here.
         worker.kill()
@@ -179,18 +182,18 @@ def stream_model(
             timing['total_ms'] = round((monotonic() - started) * 1000, 2)
 
 
-def _read_worker(worker, request, first_deadline, deadline, timing, started):
+def _read_worker(worker, request, first_deadline, deadline, timing, started, first_content_deadline=False):
     pending = bytearray()
     input_bytes = memoryview(request)
-    yielded = False
+    first_received = False
 
     def remaining():
         now = monotonic()
-        if not yielded and first_deadline < deadline and now >= first_deadline:
+        if not first_received and first_deadline < deadline and now >= first_deadline:
             raise ModelStreamError("first_token_timeout")
         if now >= deadline:
             raise ModelStreamError("total_timeout")
-        return (deadline if yielded else min(first_deadline, deadline)) - now
+        return (deadline if first_received else min(first_deadline, deadline)) - now
 
     with selectors.DefaultSelector() as poll:
         os.set_blocking(worker.stdin.fileno(), False)
@@ -229,6 +232,8 @@ def _read_worker(worker, request, first_deadline, deadline, timing, started):
                     if frame == b"D":
                         return
                     if frame == b"T":
+                        if first_content_deadline:
+                            first_received = True
                         if timing is not None:
                             timing.setdefault('ttft_ms', round((monotonic() - started) * 1000, 2))
                         continue
@@ -237,7 +242,7 @@ def _read_worker(worker, request, first_deadline, deadline, timing, started):
                         raise ModelStreamError(code if code in _ERROR_MESSAGES else "invalid_response")
                     if not frame.startswith(b"L") or len(frame) > _MAX_LINE + 1:
                         raise ModelStreamError("invalid_response")
-                    yielded = True
+                    first_received = True
                     if timing is not None:
                         timing.setdefault('first_line_ms', round((monotonic() - started) * 1000, 2))
                     yield frame[1:].decode("utf-8")

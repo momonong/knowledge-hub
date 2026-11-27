@@ -3,6 +3,7 @@
 from urllib.parse import quote, urlsplit
 
 from .connections import reading_url
+from .excerpts import preview
 from .sources import HF_FEED_LABEL, SAFE_ANCHOR_RE
 from .study_views import e, hidden
 
@@ -12,7 +13,7 @@ _PROVIDERS = {
     'vllm': 'vLLM', 'sglang': 'SGLang', 'tensorrt-llm': 'TensorRT-LLM',
     'transformers': 'Hugging Face Transformers',
 }
-_REASONS = {'project': '接上專案', 'reading': '接上閱讀', 'question': '回到未解問題'}
+_REASONS = {'reading': '接上閱讀', 'question': '回到未解問題'}
 _QUICK_READ_LABELS = (
     ('mechanism', '核心機制'), ('metrics', '實測與指標'), ('comparison', '和什麼比較'), ('limits', '限制與代價'),
 )
@@ -98,7 +99,8 @@ def _legacy_why(pick):
         angle = '摘要指出可對照的評測，讀原文時先確認它測了什麼。'
     else:
         angle = '先看它提出的做法是否切中你的問題，再到原文找驗證。'
-    return angle if pick.get('personalized') else '探索候選。' + angle
+    has_history = any(row.get('kind') in _REASONS for row in pick.get('reasons', ()))
+    return angle if has_history else '探索候選。' + angle
 
 
 def _layers(pick, item_path, version_id, title):
@@ -116,8 +118,12 @@ def _layers(pick, item_path, version_id, title):
         relevance = compact or pick.get('spectrum_reason') or relevance
     lede = f'<p class="briefing-lede">{e(" ".join(filter(None, (change, highlight))))}</p>' if change else ''
     if not change and (excerpt := pick.get('evidence')):
-        lede = (f'<blockquote class="briefing-excerpt"><span class="meta">作者來源節錄</span>'
-                f'<p>{e(excerpt)}</p></blockquote>')
+        quote = preview(excerpt, 160)[0]
+        label = '摘要節錄' if pick['version']['scope'] == 'abstract' else '原文節錄'
+        lede = (f'<p class="briefing-source-preview reader-native-only"><strong>{label}</strong> {e(quote)}</p>'
+                '<details class="briefing-excerpt-toggle" data-daily-evidence><summary>查看來源節錄</summary>'
+                f'<blockquote class="briefing-excerpt"><span class="meta">作者來源節錄</span>'
+                f'<p>{e(excerpt)}</p></blockquote></details>')
     visible = (f'<div class="daily-l1 briefing-l1">{lede}'
                f'<p class="briefing-relevance"><strong>值得讀的理由</strong> {e(relevance)}</p></div>')
     if brief.get('state') == 'degraded':
@@ -144,7 +150,7 @@ def _layers(pick, item_path, version_id, title):
 
 def story(pick, index, csrf, day):
     """A self-contained server-rendered card. Native disclosure needs no script."""
-    from .reader_views import SCOPE, date_label
+    from .reader_views import SCOPE, date_label, domain_summary
 
     item, version = pick['item'], pick['version']
     item_path = quote(str(item['id']), safe='')
@@ -173,9 +179,12 @@ def story(pick, index, csrf, day):
     category = f'<span class="briefing-topic">{e(pick["category"])}</span>' if pick.get('category') else ''
     full_text = _full_text_form(item, item_path, version, csrf)
     lead = ' briefing-lead' if index == 0 else ''
+    domains = pick.get('domains', {})
+    if domains and pick.get('category') in domains:
+        category = ''
     return (f'<article {base}{lead}"><div class="briefing-story-meta">{category}'
             f'<span class="briefing-edition">{e(edition)}</span>{status}</div>{heading}{l1}'
-            f'{l2}<div class="briefing-actions"><a class="button briefing-start" href="{e(link)}">開始一起讀</a>'
+            f'{l2}{domain_summary(domains)}<div class="briefing-actions"><a class="button briefing-start" href="{e(link)}">開始一起讀</a>'
             f'{full_text}{controls}</div>{source_label}</article>')
 
 

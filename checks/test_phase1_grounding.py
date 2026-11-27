@@ -115,6 +115,14 @@ class GroundingTests(unittest.TestCase):
         section = grounding.check_section({'kind':'evidence','text':' 原文未交代。 ','ids':[]},catalog)
         self.assertEqual(section, {'kind':'evidence','text':'原文未交代','citations':[],'missing':True})
 
+    def test_english_factor_supports_only_the_corresponding_multiplier(self):
+        factors = grounding._measures('The loss increased by a factor of 17, versus only 2.1× for the control.')
+        self.assertEqual(factors, grounding._measures('兩組各為 17 倍與 2.1 倍。'))
+        self.assertNotEqual(factors, grounding._measures('兩組各為 17% 與 2.1 倍。'))
+        self.assertEqual(grounding._measures('by a factor of 3%'), grounding._measures('3%'))
+        self.assertFalse(grounding._measures('by a factor of 17 million'))
+        self.assertFalse(grounding._measures('by a factor of 17–20'))
+
     def test_anchor_must_exist_and_visuals_must_have_matching_fixed_provenance(self):
         manifest = visuals.extract(HTML,PAPER)
         catalog = grounding.make_catalog(self.item,self.edition,'請讀這張表','S3.T1',manifest)

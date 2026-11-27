@@ -184,7 +184,42 @@
     const retry = root.querySelector('[data-layer-guide-retry]');
     const fallback = root.querySelector('[data-layer-guide-fallback]');
     const hasFallback = workspace?.dataset.layerFallback === 'true';
+    const roles = ['mechanism','evidence','boundary'];
+    const handled = new Set();
     let loading = false, currentRoute = 'primary', retryAllowed = false;
+    let pendingAppQuestion = null, readyChips = null;
+
+    function finishAppQuestion() {
+      if (!pendingAppQuestion || !readyChips) return;
+      const {role,question} = pendingAppQuestion;
+      pendingAppQuestion = null;
+      const chip = readyChips.get(role);
+      const matches = chip?.question === question;
+      if (matches && chip.ask()) return;
+      followup.review(question,matches
+        ? '另一則追問仍在處理。你可以先調整這個問題，再手動送出。'
+        : '目前的同版導讀無法核對這個建議追問。請檢查或修改問題，再手動送出。');
+    }
+
+    if (followup && item && version) {
+      reader.addEventListener('kh-app-followup',event => {
+        if (event.target !== reader || !event.cancelable || event.defaultPrevented) return;
+        const {item: sentItem,version: sentVersion,role,question} = event.detail || {};
+        if (sentItem !== item || sentVersion !== version || !roles.includes(role)
+            || typeof question !== 'string' || question.length > 2000 || !question.trim()) return;
+        const key = JSON.stringify([role,question]);
+        if (handled.has(key)) {
+          event.preventDefault();
+          return;
+        }
+        if (pendingAppQuestion) return;
+        event.preventDefault();
+        handled.add(key);
+        pendingAppQuestion = {role,question};
+        finishAppQuestion();
+      });
+      reader.dataset.khAppFollowup = '1';
+    }
 
     function prose(parent, section) {
       const paragraph = make(parent,'p',section.missing ? '原文未交代' : section.text,'prose');
@@ -228,6 +263,15 @@
       const mechanism = stage('mechanism','一起拆解機制');
       prose(mechanism,byRole.get('mechanism'));
       visualCard(mechanism,result.visual);
+      const check = byRole.get('mechanism').check;
+      if (check?.question && check.answer) {
+        const exercise = make(mechanism,'section','','guide-tradeoffs');
+        make(exercise,'h4','先自己推一次');
+        make(exercise,'p',check.question,'prose');
+        const reveal = make(exercise,'details','','guide-citations');
+        make(reveal,'summary','看推理過程');
+        prose(reveal,{...byRole.get('mechanism'),text:check.answer});
+      }
       const evidence = stage('evidence','數據與代價');
       prose(evidence,byRole.get('evidence'));
       const limits = make(evidence,'div','','guide-tradeoffs');
@@ -237,17 +281,20 @@
       const questions = stage('chips','接著追問');
       const ready = make(questions,'div','','guide-chips');
       const chips = Array.isArray(result.chips) ? result.chips : [];
-      for (const role of ['mechanism','evidence','boundary']) {
+      const verified = new Map();
+      for (const role of roles) {
         const chip = chips.find(entry => entry?.role === role);
         if (typeof chip?.question !== 'string' || !chip.question.trim()) continue;
         const cite = citationsOf(chip).find(candidate => candidate.anchor === chip.anchor &&
           sameEdition(candidate.href,visualCitation(candidate) ? 'kh-visual-' + candidate.anchor : candidate.anchor));
         if (!cite || typeof cite.quote !== 'string' || !followup) continue;
-        const action = button(ready,chip.question,() =>
-          followup.ask(chip.question,cite,result.model.route),'guide-chip');
+        const ask = () => followup.ask(chip.question,cite,result.model.route);
+        const action = button(ready,chip.question,ask,'guide-chip');
         action.dataset.guideChip = role;
+        verified.set(role,{question:chip.question,ask});
       }
       if (!ready.childElementCount) make(questions,'p','這個版本目前沒有可直接送出的建議追問。','meta');
+      return verified;
     }
 
     function renderLocal(result) {
@@ -263,6 +310,8 @@
     async function loadGuide(route = 'primary', explicitRetry = false) {
       if (loading) return;
       loading = true;
+      readyChips = null;
+      let verified = new Map();
       currentRoute = route;
       retry.hidden = fallback.hidden = true;
       content.setAttribute('aria-busy','true');
@@ -279,16 +328,17 @@
           result.sections.some(section => section.role === role && typeof section.text === 'string'))) throw new Error();
         content.replaceChildren();
         if (generated) {
-          renderModel(result);
-          say(state,'帶讀已完成，可以逐段核對同版原文。');
+          verified = renderModel(result);
+          say(state,result.scope === 'abstract' ? '本版只有摘要，以下是先讀提要。取得全文後可讀完整導讀。' :
+            '可以一段段讀，也可以先作答再展開推理。');
         } else {
           renderLocal(result);
           const model = result.model || {};
           const descriptions = {
-            unavailable:'帶讀模型尚未設定。目前可先看本站的原文導讀。',
-            running:'模型正在整理帶讀。目前可先看本站的原文導讀。',
-            blocked:'目前缺少可供模型使用的同版證據，先看本站的原文導讀。',
-            failed:'模型帶讀暫時無法完成。目前可先看本站的原文導讀。',
+            unavailable:'帶讀模型尚未設定。下方是同版原文摘錄。',
+            running:'模型正在整理逐段導讀。下方可先讀同版原文摘錄。',
+            blocked:'目前缺少可供帶讀的同版證據。下方列出已取得的段落。',
+            failed:'這次逐段導讀暫時無法完成。下方可先讀同版原文摘錄。',
           };
           const description = descriptions[model.state] || '本站依同版原文整理。';
           say(state,model.state === 'failed' && model.message ? description + model.message : description,
@@ -308,6 +358,8 @@
       } finally {
         loading = false;
         content.removeAttribute('aria-busy');
+        readyChips = verified;
+        finishAppQuestion();
       }
     }
     retry.addEventListener('click',()=>loadGuide(currentRoute,retryAllowed));
@@ -928,9 +980,38 @@
     return {
       focus:setFocus,
       ask(prompt, cite, route) {
-        if (active) {openFollowup(false); return;}
+        if (active) {openFollowup(false); return false;}
         run({question:prompt,anchor:cite.anchor,quote:cite.quote,request_id:requestID(),
           route:route === 'fallback' && canFallback ? 'fallback' : 'primary',preserveDraft:true});
+        return true;
+      },
+      review(prompt, message) {
+        const review = make(root,'form','','notice');
+        review.dataset.appFollowupReview = '';
+        form.before(review);
+        const notice = make(review,'p',message,'meta');
+        notice.setAttribute('role','status');
+        const label = make(review,'label','從應用程式帶來的問題');
+        const field = make(label,'textarea');
+        field.required = true;
+        field.maxLength = question.maxLength;
+        field.rows = question.rows;
+        field.value = prompt;
+        const actions = make(review,'div','','layer-actions');
+        make(actions,'button','送出這個問題','button').type = 'submit';
+        button(actions,'捨棄帶來的問題',() => {
+          review.remove();
+          question.focus();
+        },'text-action');
+        review.addEventListener('submit',event => {
+          event.preventDefault();
+          const edited = field.value.trim();
+          if (!edited) {field.focus(); return;}
+          if (active) {say(notice,'請等目前的追問結束，再送出這個問題。'); return;}
+          review.remove();
+          run({question:edited,anchor:'',quote:'',route:'primary',request_id:requestID(),preserveDraft:true});
+        });
+        openFollowup(false);
       },
     };
   }

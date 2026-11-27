@@ -5,8 +5,7 @@
 }
 .layer-guide .guide-stage h3 {
   color: var(--ink);
-  font-size: 1.15rem;
-  line-height: 1.45;
+  font: 700 clamp(1.25rem, 2.5vw, 1.6rem)/1.4 var(--display-font);
   margin: 0 0 .7rem;
 }
 .guide-stage .prose {
@@ -29,7 +28,7 @@
   padding: .75rem 1rem;
 }
 .guide-visual-card {
-  border-inline-start-color: var(--accent);
+  border-inline-start-color: var(--evidence);
 }
 [data-guide-visual-link] {
   align-items: center;
@@ -45,9 +44,32 @@
   color: var(--muted);
   font-size: .88rem;
 }
+.guide-tradeoffs {
+  border-inline-start-color: var(--caution);
+}
 .guide-tradeoffs h4 {
+  color: var(--caution);
   font-size: 1rem;
   margin: 0 0 .3rem;
+}
+.guide-stage[data-guide-stage="mechanism"] .guide-tradeoffs {
+  background: transparent;
+  border-inline-start-color: var(--accent);
+}
+.guide-stage[data-guide-stage="mechanism"] .guide-tradeoffs h4 {
+  color: var(--accent);
+  font: 700 1.25rem/1.4 var(--display-font);
+}
+.guide-stage[data-guide-stage="mechanism"] .guide-citations > summary {
+  padding-inline: .65rem;
+  border: 1px solid var(--accent);
+  border-radius: 5px;
+  color: var(--accent);
+  font-weight: 650;
+  min-height: 44px;
+}
+.guide-stage[data-guide-stage="mechanism"] .guide-citations > summary:hover {
+  background: var(--accent-tint);
 }
 .guide-chips {
   display: grid;

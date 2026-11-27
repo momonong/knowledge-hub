@@ -6,6 +6,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 from urllib.parse import urlencode, urlsplit
 from wsgiref.util import setup_testing_defaults
 
@@ -78,6 +79,62 @@ class ConnectedReadingAcceptance(unittest.TestCase):
 
     def generate(self, rid='connected-1', **kw):
         return self.service.generate(self.focal['item_id'], self.focal['version_id'], rid, **kw)
+
+    def test_only_extract_backgrounds_until_six_have_real_evidence(self):
+        from knowledge_hub import connections
+        for number in range(13):
+            url = f'https://example.org/background-{number}'
+            title = f'Agent memory retrieval grounding {number:02}'
+            text = ('Agent memory retrieves observations' if number == 0 else
+                    'Agent memory retrieves observations and uses retrieval grounding to verify passages.')
+            self.store.upsert_parsed_entry(dict(key=f'bg:{number}', source_name='manual',
+                title=title, label='v1', scope='partial', source_url=url,
+                content_hash=hashlib.sha256(text.encode()).hexdigest(),
+                blocks=[{'anchor':'body', 'text':text, 'source_url':url}]))
+
+        with patch.object(connections, 'excerpts', wraps=connections.excerpts) as select:
+            rows = self.context()['related']
+        self.assertEqual(len(rows), 6)
+        self.assertEqual(rows[0]['source_id'], 'sample-rag')
+        self.assertEqual([r['title'][-2:] for r in rows[1:]], ['01', '02', '03', '04', '05'])
+        self.assertTrue(all(r['excerpts'] for r in rows))
+        self.assertLessEqual(select.call_count, 8)  # Focal, up to one empty source, six matches.
+
+    def test_reopening_reuses_passages_but_new_text_and_private_focus_are_rechecked(self):
+        from knowledge_hub import excerpts
+        text = 'A repeatable passage retrieval procedure preserves citations across editions.'
+        blocks = [{'text':text}]
+        with patch.object(excerpts, 'sentence_spans', wraps=excerpts.sentence_spans) as split:
+            first = excerpts.select_spans(blocks, {'citations'}, set())
+            self.assertEqual(first[0][1], text)
+            scans = split.call_count
+            first.clear()
+            fresh_objects = [{'text':text}]
+            self.assertEqual(excerpts.select_spans(fresh_objects, {'citations'}, set())[0][1], text)
+            self.assertEqual(split.call_count, scans)
+            changed = [{'text':text.replace('preserves', 'compares')}]
+            self.assertIn('compares', excerpts.select_spans(changed, {'citations'}, set())[0][1])
+            self.assertGreater(split.call_count, scans)
+            for _ in range(2):
+                scans = split.call_count
+                self.assertTrue(excerpts.select_spans(blocks, {'citations'}, {'procedure'}))
+                self.assertGreater(split.call_count, scans)
+
+    def test_reader_recovers_the_same_journey_and_live_notes_without_ranking_unused_quotes(self):
+        from knowledge_hub import connections
+        for focus in ('', 'Retrieval', 'NoSuchTerm'):
+            with self.subTest(focus=focus):
+                full = self.context(focus=focus)
+                with patch.object(connections, 'excerpts', wraps=connections.excerpts) as extract:
+                    reader = self.context(focus=focus, for_reader=True)
+                self.assertEqual(reader['notes'], full['notes'])
+                self.assertEqual(reader['journey'], full['journey'])
+                self.assertEqual(reader['focal']['source_id'], full['focal']['source_id'])
+                self.assertEqual(reader['focal']['teaching_guide'], full['focal']['teaching_guide'])
+                extract.assert_not_called()
+        self.store.add_note(self.background['item_id'], self.background['version_id'],
+                            'rag-page-2', 'A new private observation')
+        self.assertIn('A new private observation', [n['text'] for n in self.context(for_reader=True)['notes']])
 
     def test_background_originals_notes_and_metadata_are_distinguished(self):
         ctx = self.context()

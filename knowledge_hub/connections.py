@@ -193,7 +193,8 @@ class ConnectionService:
         if payload.get('provider_binding') != self._binding():
             raise ConnectionError(409, '目前提供者的端點、provider、model 或輸出上限與原操作不同；請恢復原設定後再核對。')
 
-    def build_context(self, item_id, version_id, focus=''):
+    def build_context(self, item_id, version_id, focus='', *, for_reader=False):
+        """The reading page needs the journey and notes. Other callers also consume ranked quotes."""
         if not isinstance(focus, str) or len(focus) > 500:
             raise ConnectionError(400, '焦點最多 500 字元。')
         if not re.fullmatch(r'[1-9][0-9]{0,18}', str(version_id)):
@@ -221,13 +222,15 @@ class ConnectionService:
         # Bound query work for large originals while always retaining the explicit
         # focus and title. This is lexical retrieval, not a full semantic index.
         counts = Counter(t for b in version['blocks'] for t in tokens(b['text']))
-        terms = set(sorted(counts, key=lambda t: (-counts[t], t))[:64]) | tokens(title) | tokens(focus)
+        focus_terms = tokens(focus)
+        terms = set(sorted(counts, key=lambda t: (-counts[t], t))[:64]) | tokens(title) | focus_terms
         # Connection evidence uses SQLite's numeric version identity, matching
         # library_documents. Store hydration and existing receipts retain their
         # original string representation; normalize only at this API boundary.
         focal = {'item_id': item_id, 'version_id': int(version['id']), 'title': title, 'scope': version['scope'],
-                 'content_hash': version.get('content_hash'),
-                 'excerpts': excerpts(version, item_id, terms, focus)}
+                 'content_hash': version.get('content_hash')}
+        if not for_reader:
+            focal['excerpts'] = excerpts(version, item_id, terms, focus)
         current_sids = {m['source_id'] for m in mappings
                         if m['item_id'] == item_id and str(m['version_id']) == str(version_id)}
         card = next((c for c in sorted(cards, key=lambda c: c['id']) if c['id'] in current_sids), None)
@@ -250,15 +253,15 @@ class ConnectionService:
             rank = {'background': 3, 'shared_concept': 2, 'next': 1, 'lexical': 0}
             kind, reason = max(connection, key=lambda k: rank[k[0]], default=('lexical', '公開文字詞彙相符，建議核對語意。'))
             body = card['title'] + ' ' + card.get('summary_zh', '') + ' ' + ' '.join(b['text'] for b in ver['blocks']) if ver else card['title'] + ' ' + card.get('summary_zh', '')
-            score = len(terms & tokens(body)) + 10 * len(tokens(focus) & tokens(body))
+            vocabulary = tokens(body)
+            score = len(terms & vocabulary) + 10 * len(focus_terms & vocabulary)
             if not connection and not score:
                 continue
             candidates.append((rank[kind], score, {'source_id': card['id'], 'title': card['title'],
                 'item_id': other['id'] if other else None, 'version_id': int(ver['id']) if ver else None,
                 'scope': ver['scope'] if ver else 'metadata-only', 'relation_kind': kind, 'reason': reason,
                 'assertion_status': 'curator_proposal' if connection else 'lexical_proposal', 'concepts': cs,
-                'teaching_guide': teaching.build_teaching_guide(card['id'], ver, other['id']) if ver else None,
-                'excerpts': excerpts(ver, other['id'], terms, focus) if ver else []}))
+                'teaching_guide': teaching.build_teaching_guide(card['id'], ver, other['id']) if ver else None}, ver))
         for other in all_items.values():
             if other['id'] == item_id or other['id'] in catalogued or not other['versions']:
                 continue
@@ -267,16 +270,29 @@ class ConnectionService:
             if score:
                 candidates.append((0, score, {'item_id': other['id'], 'version_id': int(ver['id']), 'title': other['title'],
                     'scope': ver['scope'], 'relation_kind': 'lexical', 'reason': '公開文字詞彙相符，建議核對語意。',
-                    'assertion_status': 'lexical_proposal', 'concepts': [], 'excerpts': excerpts(ver, other['id'], terms, focus)}))
-        candidates.sort(key=lambda x: (-bool(x[2]['excerpts']), -x[0], -x[1], x[2]['title']))
-        related, seen = [], set()
-        for _, _, candidate in candidates:
+                    'assertion_status': 'lexical_proposal', 'concepts': []}, ver))
+        # Evidence outranks a catalog match without a quotable passage. Within
+        # each group this order is final, so the seventh passage cannot be used.
+        candidates.sort(key=lambda x: (-x[0], -x[1], x[2]['title']))
+        related, without_evidence, seen = [], [], set()
+        for _, _, candidate, ver in candidates:
             key = (candidate.get('item_id'), candidate.get('version_id')) if candidate.get('item_id') else candidate['source_id']
-            if key not in seen:
-                seen.add(key)
-                related.append(candidate)
+            if key in seen:
+                continue
+            seen.add(key)
+            if for_reader:
+                has_evidence = ver is not None and ver['scope'] != 'unavailable' and excerpt_selection.has_span(
+                    ver['blocks'], terms, focus_terms)
+            else:
+                candidate['excerpts'] = excerpts(ver, candidate['item_id'], terms, focus) if ver else []
+                has_evidence = bool(candidate['excerpts'])
+            if not has_evidence:
+                without_evidence.append(candidate)
+                continue
+            related.append(candidate)
             if len(related) == 6:
                 break
+        related.extend(without_evidence[:6 - len(related)])
         notes = []
         for source in [focal, *related]:
             owner = all_items.get(source.get('item_id'))
@@ -289,8 +305,10 @@ class ConnectionService:
                             'reading_url': reading_url(owner['id'], n['version_id'], n['anchor']),
                             'source_url': n.get('source_url') or block.get('source_url') or ver['source_url']})
         journey = learning.build_journey(focal, version, mappings, all_items, focus)
-        return {'focal': focal, 'related': related, 'notes': notes, 'limitations': LIMITATIONS,
-                'journey': journey}
+        result = {'focal': focal, 'notes': notes, 'journey': journey}
+        if not for_reader:
+            result.update(related=related, limitations=LIMITATIONS)
+        return result
 
     def records(self, item_id):
         with self.store._connect() as c:

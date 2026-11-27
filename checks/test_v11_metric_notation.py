@@ -37,6 +37,8 @@ class MetricNotationTest(unittest.TestCase):
         self.assertEqual(metric_notation.plain_metric(original), displayed)
         self.assertEqual(metric_notation.plain_metric(displayed), displayed)
         self.assertEqual(metric_notation.plain_metric(r'δ1\delta_{1}'), 'δ1')
+        self.assertEqual(metric_notation.plain_metric(r'已知 $d$，用 $\text{depth} = (f_x × B) / d$ 核對。'),
+                         '已知 d，用 depth = (fₓ × B) / d 核對。')
 
     def test_new_guide_reopened_cache_and_old_tags_share_the_same_original_citation(self):
         def transport(_config, messages, **kwargs):

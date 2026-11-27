@@ -8,8 +8,8 @@ import unittest
 from urllib.parse import urlencode
 from wsgiref.util import setup_testing_defaults
 
-from knowledge_hub.daily import run_hosted_refresh
-from knowledge_hub.discovery import rank
+from knowledge_hub.daily import DailyRefresh, run_hosted_refresh
+from knowledge_hub.discovery import classify_cached_picks, make_public_domain_cache, rank
 from knowledge_hub.reading import ReadingState
 from knowledge_hub.sources import HF_PAPERS_API, PUBLIC_PROJECTS_URL, arxiv_abs_url, arxiv_metadata_url, parse_huggingface_papers, validate_fetch_url
 from knowledge_hub.store import KnowledgeStore
@@ -42,12 +42,12 @@ class Discovery(unittest.TestCase):
         ReadingState(self.store).save(self.item,self.version,0,{'open_questions':'舊事實的記憶更新如何影響檢索？ PRIVATE_SENTINEL'})
         self.assertEqual(self.store.get_interests(),[])
 
-    def test_rank_links_questions_project_and_prior_reading_with_actual_evidence(self):
+    def test_rank_links_questions_and_prior_reading_with_actual_evidence(self):
         projects = [{'name':'Research Reader','topics':['retrieval'],'active_at':self.now.isoformat()}]
         extra = parse_huggingface_papers(feed([UNRELATED,RELATED],self.now.isoformat()))
         picks = rank(self.store,projects,extra=extra,now=self.now)
         self.assertEqual([p['item']['key'] for p in picks],['arxiv:2611.12345'])
-        self.assertEqual([p['kind'] for p in picks[0]['reasons']],['question','project','reading'])
+        self.assertEqual([p['kind'] for p in picks[0]['reasons']],['question','reading'])
         self.assertEqual(picks[0]['reasons'][0]['href'],f'/items/{self.item}?version={self.version}')
         self.assertIn('12% improvement',picks[0]['evidence'])
         self.assertNotIn('PRIVATE_SENTINEL',json.dumps(picks))
@@ -81,7 +81,7 @@ class Discovery(unittest.TestCase):
             return response
         self.assertEqual(request('/sync/daily',{})['status'],200)
         feed_calls = list(calls)
-        self.assertIn(PUBLIC_PROJECTS_URL, feed_calls)
+        self.assertNotIn(PUBLIC_PROJECTS_URL, feed_calls)
         # The hosted worker uses the same durable daily gate as the reader.
         self.assertEqual(app.refresh_daily_sources()['state'],'partial')
         self.assertEqual(calls[len(feed_calls):], [arxiv_metadata_url(RELATED[0]),arxiv_abs_url(RELATED[0])])
@@ -92,7 +92,8 @@ class Discovery(unittest.TestCase):
         self.assertIn('Episode retrieval with timestamp updates',page)
         self.assertIn('回到未解問題',page)
         self.assertIn('接上閱讀',page)
-        self.assertIn('接上專案</strong> public-reader',page)
+        self.assertNotIn('接上專案',page)
+        self.assertNotIn('public-reader',page)
         self.assertNotIn('momonong/PRIVATE_SENTINEL',page)
         self.assertNotIn(UNRELATED[1],page)
         new_item = next(row for row in self.store.get_all_items() if row['key']=='arxiv:2611.12345')
@@ -101,6 +102,53 @@ class Discovery(unittest.TestCase):
         detail=request(f'/items/{new_item["id"]}')
         self.assertEqual(detail['status'],200)
         self.assertIn('12% improvement',detail['body'])
+
+    def test_home_adds_domains_to_a_cached_fixed_edition_without_old_project_reasons(self):
+        title = 'Action-conditioned dynamics for long horizons'
+        abstract = ('We train a world model using reinforcement learning. '
+                    'We evaluate the policy for robotic manipulation and autonomous driving.')
+        pick_entry, = parse_huggingface_papers(feed([('2611.18591', title, abstract, 0)], self.now.isoformat()))
+        item_id, version_id, _ = self.store.upsert_parsed_entry(pick_entry)
+        item = self.store.get_item(item_id)
+        version = self.store.select_version(item['versions'], version_id)
+        old_pick = {
+            'item': item, 'version': version,
+            'reasons': [{'kind': 'project', 'title': 'obsolete-project', 'href': '', 'matches': ['obsolete-topic']}],
+            'personalized': True,
+        }
+        refresh = DailyRefresh(self.store)
+        refresh.run(lambda: [old_pick], day=refresh.day())
+        env = {}
+        setup_testing_defaults(env)
+        env.update(HTTP_HOST='localhost', PATH_INFO='/')
+        app = create_app(self.db, fetch=lambda url: self.fail(url), public_projects=True)
+        page = b''.join(app(env, lambda status, _: self.assertEqual(status, '200 OK'))).decode()
+        for domain in ('World Models', 'RL', 'Robotics', '自動駕駛'):
+            self.assertIn(domain, page)
+        self.assertIn('相關領域', page)
+        self.assertNotIn('接上專案', page)
+        self.assertNotIn('obsolete-project', page)
+        self.assertEqual(refresh.selection(refresh.day())[0]['reasons'], old_pick['reasons'])
+
+    def test_public_domain_cache_keys_off_fixed_content_and_is_owned_by_each_app(self):
+        cache = make_public_domain_cache()
+        date = self.now.isoformat()
+        key, title = '2611.18592', 'Learning from interactions'
+        old, new = (
+            parse_huggingface_papers(feed([(key, title, summary, 0)], date))[0]
+            for summary in ('We train a world model.', 'We study reinforcement learning.')
+        )
+        item_id, first_version, _ = self.store.upsert_parsed_entry(old)
+        _, latest_version, _ = self.store.upsert_parsed_entry(new)
+        self.assertNotEqual(first_version, latest_version)
+        def classified(version):
+            picks = [{'item': {'id': item_id}, 'version': {'id': version}}]
+            return classify_cached_picks(self.store, picks, cache)[0]['domains']
+        self.assertEqual(classified(first_version), {'World Models': 'world model'})
+        self.assertEqual(classified(latest_version), {'RL': 'reinforcement learning'})
+        self.assertEqual(classified(first_version), {'World Models': 'world model'})
+        self.assertEqual((cache.cache_info().hits, cache.cache_info().misses), (1, 2))
+        self.assertEqual(make_public_domain_cache().cache_info().currsize, 0)
 
     def test_allowlist_refuses_outbound_queries_containing_signal_text(self):
         with self.assertRaises(ValueError):

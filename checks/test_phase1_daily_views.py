@@ -64,7 +64,8 @@ class DailyCardTest(unittest.TestCase):
         self.assertNotIn('open', tags.attributes('details')[0])
         self.assertNotIn('tabindex', tags.attributes('summary')[0])
         self.assertEqual(tags.attributes('script'), [])
-        self.assertIn('接上專案</strong> public-reader', markup)
+        self.assertNotIn('接上專案', markup)
+        self.assertNotIn('public-reader', markup)
         self.assertNotIn('快取、快取', markup)
 
     def test_abstract_deep_read_keeps_post_fetch_and_direct_fixed_edition_link(self):

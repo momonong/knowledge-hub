@@ -67,6 +67,7 @@ class GuidedRoomTests(unittest.TestCase):
             {'type': 'hook', 'text': '工作負載換了階段時，傳統 eviction 容易丟掉下一階段可重用的 key。',
              'ids': [ref('Conventional eviction')]},
             {'type': 'mechanism', 'text': '先用 segmented gate 壓縮已存文件，再逐一核對保留下來的候選。',
+             'check': {'question':'被閘門淘汰的文件還能參加重排嗎？','answer':'閘門只把保留下來的候選交給重排。'},
              'ids': [ref('segmented gate')]},
             {'type': 'evidence', 'text': 'CoralBench 比較中，重排把 recall 從 60% 提升到 71%。',
              'ids': [ref('CoralBench.')]},
@@ -135,6 +136,44 @@ class GuidedRoomTests(unittest.TestCase):
         self.assertEqual(result['mode'], 'model')
         self.assertIsNone(result['visual'])
         self.assertEqual(json.loads(send.call_args.args[1][-1]['content'])['visuals'], [])
+
+    def test_offline_reader_receives_same_lesson_and_publisher_anchors_without_private_fields(self):
+        self.remember_visuals()
+        with patch.object(guided, 'stream_model', side_effect=self.transport):
+            guide = self.run_guide()
+        packet = guided.portable_lesson(guide)
+        self.assertEqual(packet['version'], str(self.version_id))
+        lesson = packet['lesson']
+        mechanism = next(step for step in guide['sections'] if step['role'] == 'mechanism')
+        self.assertEqual(lesson['check'], mechanism['check'])
+        self.assertIn(SOURCE + '#approach', lesson['sections'][1]['links'])
+        self.assertEqual(lesson['sections'][1]['text'], mechanism['text'])
+        for mobile, section in zip(lesson['sections'], guide['sections'], strict=True):
+            self.assertEqual(mobile['passages'], [
+                {'quote': cite['quote'], 'url': cite['source_url']} for cite in section['citations']
+            ])
+        self.assertEqual(lesson['questions'], [
+            {'role': chip['role'], 'question': chip['question']} for chip in guide['chips']
+        ])
+        self.assertEqual([q['role'] for q in lesson['questions']], ['mechanism', 'evidence', 'boundary'])
+        self.assertNotIn('canonical_id', json.dumps(packet))
+        for change in ({'scope':'abstract'}, {'format':5}, {'mode':'local'}):
+            self.assertIsNone(guided.portable_lesson({**guide, **change})['lesson'])
+
+    def test_mechanism_includes_nearby_variable_definition_and_preserves_its_anchor(self):
+        html = HTML.replace(b'We propose a segmented gate that compresses stored documents and verifies surviving candidates.</p>',
+                            b'We compute a gate score from the query and each document. The gate score determines which candidates survive for verification.</p>'
+                            b'<p id="scale">Here, the gate score is in log units and the threshold is a calibrated margin measured on the held-out corpus.</p>')
+        _, version_id, _ = self.store.upsert_parsed_entry(parse_arxiv_html(html, SOURCE))
+        item, version = Followups(self.store).public_edition(self.item_id, str(version_id))
+        catalog, evidence, figures = guided._catalog(item, version, {})
+        definition = guided._tasks(evidence, figures)['mechanism']['definition']
+        self.assertIn('calibrated margin', definition['quote'])
+        self.assertEqual(catalog[definition['id']]['source_url'], SOURCE + '#scale')
+
+    def test_publisher_fraction_and_signed_math_duplicates_keep_the_displayed_measurement(self):
+        self.assertEqual(guided._wire_quote('74.38% (90/12190/121) and +3.2+3.2 points'),
+                         '74.38% (90/121) and +3.2 points')
 
     def test_caption_without_renderable_evidence_is_omitted(self):
         href = b'<figure id="S3.T1" class="ltx_table"><figcaption>Table 1: CoralBench recall.</figcaption></figure>'
@@ -283,6 +322,9 @@ class GuidedRoomTests(unittest.TestCase):
             role: ({'missing': True} if task is None else {'id':task['id'],'text':sections[role]})
             for role, task in tasks.items() if role != 'chips'
         }
+        if 'mechanism' in tasks:
+            answer['mechanism']['check'] = {'question':'被閘門淘汰的文件還能參加重排嗎？',
+                                        'answer':'重排只會讀到閘門保留下來的候選。'}
         if 'visual' in tasks:
             answer['visual']['panel'] = tasks['visual']['panel']
         questions = {
@@ -290,9 +332,10 @@ class GuidedRoomTests(unittest.TestCase):
             'evidence':'用原始排名當基準時，重排改善的是哪項評量？',
             'boundary':'離開靜態集合後，本文有驗證線上更新嗎？',
         }
-        answer['chips'] = {
-            key:{'id':target['id'],'question':questions[key]} for key,target in tasks['chips'].items()
-        }
+        if 'chips' in tasks:
+            answer['chips'] = {
+                key:{'id':target['id'],'question':questions[key]} for key,target in tasks['chips'].items()
+            }
         return answer
 
     def test_walkthrough_can_take_two_steps_without_borrowing_a_second_source(self):
@@ -346,6 +389,7 @@ class GuidedRoomTests(unittest.TestCase):
             if len(remaining) == 1:
                 answer['evidence']['text'] = '表 99 顯示召回率由 60% 提升至 99%。'
             else:
+                self.assertEqual(set(json.loads(messages[-1]['content'])['tasks']), {'evidence'})
                 self.assertIn('invalid_citation', messages[-1]['content'])
                 self.assertNotIn('99%', messages[-1]['content'])
             yield json.dumps(answer)
@@ -398,6 +442,42 @@ class GuidedRoomTests(unittest.TestCase):
         self.assertTrue(any('CoralBench' in r['quote'] and '71%' in r['quote'] for r in text_rows))
         table_rows = [r for r in rows if r.get('quantitative') and r['role'] == 'table']
         self.assertTrue(any('Reranking | 71%' in r['quote'] for r in table_rows))
+
+    def test_matched_intervention_beats_numeric_model_setup_as_an_outcome(self):
+        comparison = ('Removing the learned update increases error by a factor of 17, '
+                      'whereas a random update of the same magnitude increases it by only 2.1×.')
+        html = HTML.replace(b'Compared with a BM25 baseline, reranking raises recall from 60% to 71% on CoralBench.',
+                            comparison.encode()).replace(b'CoralBench recall.', b'Models used during evaluation.')
+        html = html.replace(b'<th>Recall</th>', b'<th>Hidden width</th>').replace(b'60%', b'512').replace(b'71%', b'1024')
+        _, self.version_id, _ = self.store.upsert_parsed_entry(parse_arxiv_html(html, SOURCE))
+        self.remember_visuals(html)
+        item, version = Followups(self.store).public_edition(self.item_id, self.version_id)
+        panels = guided._renderable(item, version, guided._panels(self.store, self.version_id))
+        _, entries, figures = guided._catalog(item, version, panels)
+        result = guided._tasks(entries, figures)['evidence']
+        self.assertEqual(result['quote'], comparison)
+        table = [entry for entry in entries if 'Reranking | 1024' in entry['quote']]
+        self.assertTrue(table)
+        self.assertFalse(any(entry['quantitative'] for entry in table))
+
+    def test_measurement_table_after_two_setup_tables_keeps_an_unfamiliar_metric(self):
+        def table(anchor, caption, header, value):
+            return (f'<figure id="{anchor}" class="ltx_table"><figcaption>{caption}</figcaption>'
+                    f'<table class="ltx_tabular"><tr><th>Model</th><th>{header}</th></tr>'
+                    f'<tr><td>TideCache</td><td>{value}</td></tr></table></figure>').encode()
+        start, end = HTML.index(b'<figure'), HTML.index(b'</figure>') + len(b'</figure>')
+        html = HTML[:start] + b''.join((
+            table('S3.T1', 'Table 1: Models used for evaluation.', 'Hidden width', 512),
+            table('S3.T2', 'Table 2: Checkpoints used.', 'Layers', 12),
+            table('S3.T3', 'Table 3: Held-out observations.', 'ZQ index', 73),
+        )) + HTML[end:]
+        _, self.version_id, _ = self.store.upsert_parsed_entry(parse_arxiv_html(html, SOURCE))
+        self.remember_visuals(html)
+        item, version = Followups(self.store).public_edition(self.item_id, self.version_id)
+        panels = guided._renderable(item, version, guided._panels(self.store, self.version_id))
+        rows = [(cite['quote'], measured) for (_, cite), measured in guided._table_quotes(item, version, panels)]
+        self.assertIn(('TideCache | 73', True), rows)
+        self.assertNotIn(('TideCache | 512', True), rows)
 
     def test_evidence_window_rejects_other_comparison_values_under_the_same_citation(self):
         html = HTML.replace(b'on CoralBench.', b'on CoralBench, but decreases from 58% to 49% on alternate data.')

@@ -54,6 +54,50 @@ class PhaseOneRanking(unittest.TestCase):
         self.assertTrue(all('「' in pick['spectrum_reason'] for pick in picks))
         self.assertTrue(any('World Models' in pick['spectrum_reason'] for pick in picks))
 
+    def test_domains_track_supported_topics_and_ignore_background_mentions(self):
+        driving = entry('arxiv:2611.11101', 'Action-conditioned world models for autonomous driving',
+                        'We optimize a trajectory planner using reinforcement learning. '
+                        'Prior work in robotics uses AI agents with tool calls.')
+        robot = entry('arxiv:2611.11102', 'Visuomotor policies for robotic manipulation',
+                      'We learn from human demonstrations with imitation learning.')
+        agent = entry('arxiv:2611.11103', 'Memory folding for efficient agent memory management',
+                      'We propose a supervised tool-calling workflow without world models.')
+        irrelevant = entry('arxiv:2611.11104', 'Traffic statistics from fixed cameras',
+                           'Previous research has studied autonomous driving.')
+        irrelevant['blocks'].append({'anchor': 'bib.bib1', 'text': 'A world model for robotic manipulation.'})
+        rows = {p['item']['key']: p.get('domains') for p in rank(self.store, extra=[driving, robot, agent, irrelevant], now=NOW)}
+        self.assertEqual(rows, {
+            'arxiv:2611.11101': {'World Models': 'world models', '自動駕駛': 'autonomous driving',
+                                 'RL': 'reinforcement learning'},
+            'arxiv:2611.11102': {'Robotics': 'robotic manipulation'},
+            'arxiv:2611.11103': {'AI Agents': 'agent memory'},
+        })
+
+    def test_benchmark_variant_names_do_not_assign_domains(self):
+        text = 'We evaluate memory compression on the M3-Bench-web, M3-Bench-robot and TaskBench-RL splits.'
+        paper = entry('arxiv:2611.11106', 'Efficient agent memory management', text)
+        pick, = rank(self.store, extra=[paper], now=NOW)
+        self.assertEqual(pick['domains'], {'AI Agents': 'agent memory'})
+
+        method = entry('arxiv:2611.11107', 'Robot learning with a compressed policy',
+                       text + ' We train the controller with offline reinforcement learning.')
+        pick, = rank(self.store, extra=[method], now=NOW)
+        self.assertEqual(pick['domains'], {'Robotics': 'Robot learning', 'RL': 'reinforcement learning'})
+
+    def test_method_evidence_counts_while_reference_sections_do_not(self):
+        version = entry('arxiv:2611.11105', 'Learning to predict from interaction',
+                        'We evaluate interaction in unseen environments.')
+        version['blocks'].extend([
+            {'anchor': 'S2', 'text': '2 Related Work'},
+            {'anchor': 'S2.p1', 'text': 'Reinforcement learning and autonomous driving feature in earlier research.'},
+            {'anchor': 'S3', 'text': '3 Method Overview'},
+            {'anchor': 'S3.p1', 'text': 'We learn a vision–language–action model and predict with a world model.'},
+            {'anchor': 'p4', 'text': 'References'},
+            {'anchor': 'p5', 'text': 'A terminal list of work about AI agents and autonomous driving.'},
+        ])
+        pick, = rank(self.store, extra=[version], now=NOW)
+        self.assertEqual(pick['domains'], {'Robotics': 'vision–language–action', 'World Models': 'world model'})
+
     def test_category_cap_survives_sparse_pool(self):
         rows = [entry(f'arxiv:2611.1000{i}', f'KV Cache Scheduling {i}',
                       'We report lower decoding latency in a throughput evaluation.') for i in range(6)]

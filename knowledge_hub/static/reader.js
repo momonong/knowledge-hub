@@ -15,6 +15,9 @@
   };
   const reader = document.querySelector('[data-reader]');
   const csrf = document.querySelector('#page-csrf')?.value;
+  if (!document.documentElement?.hasAttribute?.('data-native-reader')) {
+    document.querySelectorAll('[data-daily-evidence]').forEach(details => { details.open = true; });
+  }
   function panelLabel(panel) {
     const number = panel.caption.match(/^(?:Figure|Fig\.|Table)\s+(\d+[a-z]?)/i)?.[1];
     return number ? (panel.kind === 'table' ? '表 ' : '圖 ') + number : '';
@@ -672,14 +675,29 @@
     const flushOnLeave = () => {if (dirty && !submitting) flush(true);};
     document.addEventListener('visibilitychange', () => {if (document.hidden) flushOnLeave();});
     window.addEventListener('pagehide', flushOnLeave);
+    let pendingNavigation = false;
+    // A restored page may still hold the guard from the navigation that left it.
+    window.addEventListener('pageshow', () => { pendingNavigation = false; });
     document.addEventListener('click', async event => {
       const link = event.target.closest('a');
-      if (!link || event.defaultPrevented || (!dirty && !saving) || event.ctrlKey || event.metaKey || link.target === '_blank') return;
-      const url = new URL(link.href,location.href);
+      if (!link || event.defaultPrevented || (!pendingNavigation && !dirty && !saving) ||
+          event.ctrlKey || event.metaKey || event.shiftKey || event.altKey || event.button > 0 ||
+          link.target === '_blank' || !link.href) return;
+      const url = new URL(link.href, location.href);
       if (url.origin !== location.origin || (url.pathname === location.pathname && url.search === location.search && url.hash)) return;
       event.preventDefault();
-      if (submitting) return;
-      if (await flush()) location.assign(link.href);
+      if (submitting || pendingNavigation) return;
+      pendingNavigation = true;
+      if (!await flush()) {
+        pendingNavigation = false;
+        return;
+      }
+      try {
+        location.assign(url.href);
+      } catch (error) {
+        pendingNavigation = false;
+        throw error;
+      }
     });
   }
   document.querySelectorAll('form[data-busy]').forEach(form => form.addEventListener('submit', async event => {

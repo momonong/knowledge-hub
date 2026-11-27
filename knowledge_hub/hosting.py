@@ -3,6 +3,7 @@
 Home validates only password-management authorization. Reading uses KH's own
 password and cookie; no Home database, password or verifier is shared.
 """
+from functools import lru_cache
 from html import escape
 from html.parser import HTMLParser
 from http.client import HTTPConnection, HTTPException
@@ -10,7 +11,9 @@ from http.cookies import SimpleCookie, CookieError
 import json
 import re
 from hmac import compare_digest
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
+
+from .access import ASSETS
 
 
 HOME_COOKIE = '__Host-momonong-home'
@@ -75,17 +78,20 @@ def mounted_url(prefix, value):
 
 class _MountedHTML(HTMLParser):
     """Rewrite URL attributes, never article text, escaped notes, or script data."""
-    def __init__(self, prefix):
+    def __init__(self, prefix, *, native_reader=False):
         super().__init__(convert_charrefs=False)
         self.prefix, self.parts = prefix, []
+        self.native_reader = native_reader
 
-    def _tag(self):
+    def _tag(self, *, native_root=False):
         raw = self.get_starttag_text()
+        if native_root:
+            raw = raw[:-1] + ' data-native-reader>'
         self.parts.append(re.sub(r'\b(href|src|action|formaction)=(\"|\')(/[^\"\']*)\2',
             lambda m: m[1] + '=' + m[2] + mounted_url(self.prefix, m[3]) + m[2], raw))
 
     def handle_starttag(self, tag, attrs):
-        self._tag()
+        self._tag(native_root=(tag == 'html' and self.native_reader))
         if tag == 'head':
             self.parts.append('<meta name="kh-base-path" content="' + self.prefix + '">')
     def handle_startendtag(self, tag, attrs): self._tag()
@@ -95,6 +101,14 @@ class _MountedHTML(HTMLParser):
     def handle_charref(self, name): self.parts.append('&#' + name + ';')
     def handle_comment(self, data): self.parts.append('<!--' + data + '-->')
     def handle_decl(self, decl): self.parts.append('<!' + decl + '>')
+
+
+@lru_cache(maxsize=1)
+def _fallback_brand():
+    """Load the public visual assets for HTML sent without a reader session."""
+    styles = '\n'.join((ASSETS / name).read_text() for name in ('palette.css', 'access.css'))
+    icon = 'data:image/svg+xml,' + quote((ASSETS / 'book.svg').read_text(), safe='')
+    return styles, icon
 
 
 class MountedApplication:
@@ -117,7 +131,7 @@ class MountedApplication:
         headers = [('Content-Type', mime), ('Content-Length', str(len(payload))),
                    ('Cache-Control', 'no-store'), ('Vary', 'Cookie'),
                    ('X-Content-Type-Options', 'nosniff'), ('Referrer-Policy', 'no-referrer'),
-                   ('Content-Security-Policy', "default-src 'none'; img-src https://momonong.me/sites/_icons/v1/; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'")]
+                   ('Content-Security-Policy', "default-src 'none'; img-src data:; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'")]
         start(code, headers + list(extra))
         return [payload]
 
@@ -151,12 +165,16 @@ class MountedApplication:
             title = '暫時無法確認登入' if unavailable else '登入後，接著學'
             explanation = ('首頁登入服務暫時無法連線，請稍後再試。你的資料沒有開放給其他人。' if unavailable
                            else 'Knowledge Hub 保存你的閱讀、問題與理解。請先用 Momonong Home 的站主登入，再回來繼續。')
+            styles, icon = _fallback_brand()
             body = f'''<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8">
               <meta name="viewport" content="width=device-width, initial-scale=1"><title>{title} — Knowledge Hub</title>
-              <style>body{{margin:0;background:#f4f6f3;color:#17201d;font:18px/1.8 system-ui}}main{{max-width:580px;margin:12vh auto;padding:28px}}h1{{font-size:36px;line-height:1.3}}a{{display:inline-block;margin:12px 16px 0 0;color:#075d52}}.cta{{background:#17201d;color:white;padding:12px 20px;text-decoration:none;border-radius:6px}}</style><link rel="icon" type="image/x-icon" href="/sites/_icons/v1/knowledge.ico"><link rel="icon" type="image/svg+xml" sizes="any" href="/sites/_icons/v1/knowledge.svg"><link rel="apple-touch-icon" sizes="180x180" href="/sites/_icons/v1/knowledge-180.png"></head>
-              <body><main><p>Knowledge Hub</p><h1>{title}</h1><p>{explanation}</p>
-              <a class="cta" href="/#passwords">前往首頁登入</a><a href="{self.prefix}/">重新確認登入</a>
-              <p><small>使用既有站主帳號，不需要另設一組密碼。</small></p></main></body></html>'''
+              <link rel="icon" sizes="any" type="image/svg+xml" href="{icon}"><style>{styles}</style></head>
+              <body><header><a class="brand" href="{self.prefix}/">
+              <img class="kh-book" src="{icon}" width="32" height="32" alt="">Knowledge Hub</a></header>
+              <main><h1>{title}</h1><p>{explanation}</p>
+              <p class="access-actions"><a class="cta" href="/#passwords">前往首頁登入</a>
+              <a href="{self.prefix}/">重新確認登入</a></p>
+              <p class="hint">使用既有站主帳號，不需要另設一組密碼。</p></main></body></html>'''
             return self._reply(start_response, '503 Service Unavailable' if unavailable else '401 Unauthorized', body)
         inner = dict(environ)
         inner.update(PATH_INFO=path[len(self.prefix):], SCRIPT_NAME=self.prefix,
@@ -177,13 +195,19 @@ class MountedApplication:
         headers = captured['headers']
         mime = next((value for key,value in headers if key.lower()=='content-type'), '')
         if mime.startswith('text/html'):
-            parser = _MountedHTML(self.prefix)
+            # A presentation capability only. Authentication has already run above.
+            native_reader = 'KnowledgeHubAndroid/2' in environ.get('HTTP_USER_AGENT', '').split()
+            parser = _MountedHTML(self.prefix, native_reader=native_reader)
             parser.feed(payload.decode('utf-8')); parser.close()
             document = ''.join(parser.parts)
-            document = document.replace('</footer>', '<a href="/">Momonong Home ↗</a></footer>')
+            if not native_reader:
+                document = document.replace('</footer>', '<a href="/">Momonong Home ↗</a></footer>')
             if self.access:
+                trust_link = f'<a href="{self.prefix}/access/login?trust=1">信任裝置</a>'
+                if native_reader:
+                    document = document.replace('<!--kh-device-menu-->', trust_link)
                 document = document.replace('</footer>',
-                    f'<a href="{self.prefix}/access/logout">登出 Knowledge Hub</a></footer>')
+                    trust_link + f'<a href="{self.prefix}/access/logout">登出 Knowledge Hub</a></footer>')
             payload = document.encode('utf-8')
         elif mime.startswith('application/json'):
             value = json.loads(payload)
@@ -193,7 +217,7 @@ class MountedApplication:
         output_headers = [(key, str(len(payload)) if key.lower()=='content-length' else
                            mounted_url(self.prefix,value) if key.lower()=='location' else value)
                           for key,value in headers]
-        output_headers.append(('Vary','Cookie'))
+        output_headers.append(('Vary', 'Cookie, User-Agent' if mime.startswith('text/html') else 'Cookie'))
         output_headers.append(('X-Robots-Tag','noindex, nofollow, noarchive, nosnippet'))
         start_response(captured['status'], output_headers)
         return [payload]

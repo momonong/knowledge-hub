@@ -2,32 +2,45 @@
 <html lang="zh-Hant"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>登入與密碼 — Knowledge Hub</title>
-<link rel="icon" type="image/svg+xml" href="/sites/_icons/v1/knowledge.svg">
+<link rel="icon" sizes="any" type="image/svg+xml" href="{{prefix}}/access/book.svg">
+<link rel="stylesheet" href="{{prefix}}/access/palette.css">
 <link rel="stylesheet" href="{{prefix}}/access/access.css">
 <script src="{{prefix}}/access/access.js" defer></script></head>
 <body data-mode="{{mode}}" data-prefix="{{prefix}}">
-<header><a class="brand" href="{{prefix}}/">Knowledge Hub</a><a href="/#passwords">首頁密碼管理 ↗</a></header>
+<header><a class="brand" href="{{prefix}}/"><img class="kh-book" src="{{prefix}}/access/book.svg" width="32" height="32" alt="">Knowledge Hub</a>
+<a class="access-settings" href="{{prefix}}/settings/">裝置管理</a><a class="home-settings" href="/#passwords">首頁密碼管理 ↗</a></header>
 <main>
 <section id="login-panel" hidden><h1>登入後，接著學</h1>
-<p>輸入 Knowledge Hub 的獨立密碼，接續閱讀、問題與筆記。</p>
+<button id="passkey-login" type="button" class="secondary" hidden>用指紋或螢幕鎖定登入</button>
 <form id="login-form" method="post" action="{{prefix}}/access/login">
 <label for="login-password">Knowledge Hub 密碼</label>
 <input id="login-password" name="password" type="password" autocomplete="current-password" required maxlength="128">
+<label id="trust-choice" class="check-row" hidden><input id="trust-device" type="checkbox">信任這支裝置 30 天</label>
 <button type="submit" disabled>登入 Knowledge Hub</button></form>
 <p class="hint">第一次使用？先到<a href="{{prefix}}/settings/">設定 KH 密碼</a>。</p></section>
-<section id="settings-panel" hidden><h1>Knowledge Hub 密碼</h1>
-<p>由站主管理設定，供 Knowledge Hub 獨立登入使用。</p>
+<section id="enroll-panel" hidden><h1 tabindex="-1">信任這支裝置</h1>
+<p>建立通行金鑰後，30 天內可直接續讀。到期時，用指紋或螢幕鎖定再次登入。</p>
+<form id="enroll-form">
+<label for="device-name">裝置名稱</label><input id="device-name" type="text" value="我的手機" maxlength="48" required autocomplete="off">
+<p class="hint">取個認得的名稱，日後可以在另一台裝置撤銷。</p>
+<button type="submit">建立通行金鑰</button></form>
+<button id="skip-enroll" class="secondary" type="button">這次先閱讀</button></section>
+<section id="trusted-panel" hidden><h1>這支裝置已受信任</h1><p id="trust-summary"></p>
+<div class="access-actions"><a class="cta" href="{{prefix}}/">繼續閱讀</a><a href="{{prefix}}/settings/">管理信任裝置</a></div></section>
+<section id="settings-panel" hidden><h1>登入與信任裝置</h1>
+<p>使用站主管理登入，可撤銷遺失的裝置或更換 Knowledge Hub 密碼。</p>
 <form id="owner-form" method="post" action="/home-api/login" hidden>
 <label for="owner-password">首頁站主管理密碼</label>
 <input id="owner-password" name="password" type="password" autocomplete="current-password" required>
 <button type="submit">登入站主管理</button></form>
+<section id="trusted-devices" hidden><h2>信任裝置</h2><ul id="trusted-device-list"></ul><p id="device-list-status" class="hint" role="status"></p></section>
 <form id="settings-form" method="post" action="{{prefix}}/access/password" hidden>
 <label for="new-password">新的 KH 密碼</label>
 <input id="new-password" name="password" type="password" autocomplete="new-password" required minlength="12" maxlength="128" aria-describedby="password-help">
 <p id="password-help" class="hint">12–128 字，可用中文或一段片語，首尾空格會保留。請選擇與首頁不同的密碼。</p>
 <label for="repeat-password">再輸入一次</label>
 <input id="repeat-password" type="password" autocomplete="new-password" required minlength="12" maxlength="128">
-<p class="hint">儲存後，KH 原有登入會失效。閱讀進度、追問和私人筆記都會保留。</p>
+<p class="hint">更換密碼會登出所有裝置並撤銷已建立的通行金鑰。你可以用新密碼重新綁定。</p>
 <button type="submit">儲存 KH 密碼</button></form>
 <button id="owner-logout" class="secondary" type="button" hidden>登出站主管理</button>
 <p><a href="{{prefix}}/">前往 Knowledge Hub →</a></p></section>
