@@ -281,6 +281,8 @@ class SiteReaderTest {
     }
 
     @Test
+    @Config(qualifiers = "zh-rTW-w390dp-h780dp-mdpi")
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
     fun closingTheNativeUpdateDialogKeepsTheSameWebView() {
         val article = SitePolicy.HOME + "items/12?version=34#outline"
         val original = compose.runOnIdle {
@@ -299,11 +301,25 @@ class SiteReaderTest {
             assertEquals(0, shadowOf(original).reloadInvocations)
             assertNull(shadowOf(compose.activity).nextStartedActivity)
         }
+        compose.onNodeWithText("返回今日").assertIsDisplayed().assertHeightIsAtLeast(48.dp)
+        captureReader("reader-article", "reader-navigation-bar", article)
         compose.onNodeWithText("管理").performClick()
         compose.runOnIdle {
             assertTrue(shadowOf(original).lastEvaluatedJavascript.endsWith(
                 "(${JSONObject.quote(SitePolicy.MANAGE)}, ${JSONObject.quote(SitePolicy.ORIGIN)})",
             ))
+        }
+    }
+
+    @Test
+    fun coldLaunchOpensTodayEvenWhenAnEarlierInstallationSavedAnArticle() {
+        val prefs = compose.activity.getSharedPreferences("site_reader", Context.MODE_PRIVATE)
+        prefs.edit().putString("last_article_url", SitePolicy.HOME + "items/12?version=34").commit()
+        ActivityScenario.launch(MainActivity::class.java).use { fresh ->
+            fresh.onActivity { activity ->
+                val web = checkNotNull(activity.window.decorView.findWebView())
+                assertEquals(SitePolicy.HOME, shadowOf(web).lastLoadedUrl)
+            }
         }
     }
 
@@ -430,11 +446,11 @@ class SiteReaderTest {
 
     private val homeRequest = mainFrameRequest(SitePolicy.HOME)
 
-    private fun captureReader(name: String, navigationTag: String) {
+    private fun captureReader(name: String, navigationTag: String, url: String = SitePolicy.HOME) {
         compose.runOnIdle {
             checkNotNull(compose.activity.window.decorView.findWebView()).also {
-                it.webViewClient.onPageStarted(it, SitePolicy.HOME, null)
-                it.webViewClient.onPageFinished(it, SitePolicy.HOME)
+                it.webViewClient.onPageStarted(it, url, null)
+                it.webViewClient.onPageFinished(it, url)
             }
         }
         val root = compose.onRoot()
@@ -485,7 +501,7 @@ class SiteReaderResumeTest {
     @get:Rule val compose = createEmptyComposeRule()
 
     @Test
-    fun freshLaunchReturnsToTheLastReadableArticleAndItsSection() {
+    fun rotatingRetainsTheLastReadableSectionWhileAFreshLaunchShowsToday() {
         val article = SitePolicy.HOME + "items/12?version=34"
         val section = article + "#methods"
         val unauthorized = SitePolicy.HOME + "items/34?version=12"
@@ -506,19 +522,24 @@ class SiteReaderResumeTest {
                     WebResourceResponse("text/html", "utf-8", 401, "Unauthorized", emptyMap(), null),
                 )
                 web.webViewClient.onPageFinished(web, unauthorized)
-                for (path in listOf("access/login", "items/56?version=78&draft=synthetic", "library")) {
+                for (path in listOf("access/login", "items/56?version=78&draft=synthetic")) {
                     val url = SitePolicy.HOME + path
                     web.loadUrl(url)
                     web.webViewClient.onPageStarted(web, url, null)
                     web.webViewClient.onPageFinished(web, url)
                 }
             }
+            session.recreate()
+            compose.waitForIdle()
+            session.onActivity { activity ->
+                assertEquals(section, shadowOf(checkNotNull(activity.window.decorView.findWebView())).lastLoadedUrl)
+            }
         }
         ActivityScenario.launch(MainActivity::class.java).use { session ->
             compose.waitForIdle()
             session.onActivity { activity ->
                 val web = checkNotNull(activity.window.decorView.findWebView())
-                assertEquals(section, shadowOf(web).lastLoadedUrl)
+                assertEquals(SitePolicy.HOME, shadowOf(web).lastLoadedUrl)
                 assertEquals(0, shadowOf(web).reloadInvocations)
             }
         }
