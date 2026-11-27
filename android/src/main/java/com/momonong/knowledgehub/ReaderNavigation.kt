@@ -62,6 +62,8 @@ internal fun ReaderNavigationLayout(
     canNavigate: Boolean,
     showNavigation: Boolean,
     modifier: Modifier = Modifier,
+    articleParent: ReaderDestination? = null,
+    onReturnToList: () -> Unit = {},
     content: @Composable () -> Unit,
 ) {
     BoxWithConstraints(modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)) {
@@ -73,7 +75,7 @@ internal fun ReaderNavigationLayout(
             content = {
                 Column {
                     if (showChrome) {
-                        ReaderHeader(canNavigate, { onSelect(ReaderDestination.TODAY) }, onManage, onUpdate)
+                        ReaderHeader(canNavigate, articleParent, { onSelect(ReaderDestination.TODAY) }, onReturnToList, onManage, onUpdate)
                     }
                     Box(Modifier.weight(1f)) { content() }
                 }
@@ -153,7 +155,10 @@ private fun ReaderNavigation(
 }
 
 @Composable
-private fun ReaderHeader(canNavigate: Boolean, onHome: () -> Unit, onManage: () -> Unit, onUpdate: () -> Unit) {
+private fun ReaderHeader(
+    canNavigate: Boolean, articleParent: ReaderDestination?, onHome: () -> Unit,
+    onReturnToList: () -> Unit, onManage: () -> Unit, onUpdate: () -> Unit,
+) {
     val colors = MaterialTheme.colorScheme
     Column(Modifier.fillMaxWidth().background(colors.surface).testTag("reader-header")) {
         Row(
@@ -162,14 +167,19 @@ private fun ReaderHeader(canNavigate: Boolean, onHome: () -> Unit, onManage: () 
         ) {
             Row(
                 Modifier.weight(1f).heightIn(min = 48.dp).clickable(
-                    enabled = canNavigate, role = Role.Button, onClick = onHome,
+                    enabled = canNavigate, role = Role.Button,
+                    onClick = if (articleParent == null) onHome else onReturnToList,
                 ),
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Icon(painterResource(R.drawable.kh_pages), null, Modifier.size(32.dp), tint = colors.primary)
+                if (articleParent == null) {
+                    Icon(painterResource(R.drawable.kh_pages), null, Modifier.size(32.dp), tint = colors.primary)
+                } else {
+                    Icon(painterResource(R.drawable.ic_reader_back), null, Modifier.size(24.dp), tint = colors.primary)
+                }
                 Text(
-                    "研讀手記",
+                    articleParent?.let { "返回${it.title}" } ?: "研讀手記",
                     style = MaterialTheme.typography.titleMedium,
                     fontFamily = FontFamily.Serif,
                     fontWeight = FontWeight.SemiBold,

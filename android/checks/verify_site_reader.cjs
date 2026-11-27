@@ -12,6 +12,7 @@ async function main() {
   const browser = await chromium.launch({executablePath: process.env.CHROME_BIN, args:['--no-sandbox']});
   try {
     const page = await browser.newPage({viewport:{width:390,height:800}});
+    page.setDefaultTimeout(8000);
     let html = rendered.login;
     let loggedIn = false;
     await page.route('**/*', route => {
@@ -74,12 +75,68 @@ async function main() {
     const raw = name => readFileSync(path.join(__dirname, '../src/main/res/raw', name + '.js'), 'utf8').trim();
     const header = raw('reader_header') + '(' + JSON.stringify(origin) + ')';
     const navigate = target => raw('reader_navigation') + '(' + JSON.stringify(target) + ',' + JSON.stringify(origin) + ')';
-    await page.addInitScript({content:header});
+    const css = readFileSync(path.join(__dirname, '../src/main/res/raw/reader_surface_css.css'), 'utf8');
+    const surface = raw('reader_surface') + '(' + JSON.stringify(origin) + ',' + JSON.stringify(css) + ')';
+    await page.addInitScript({content:header + ';\n' + surface});
     html = rendered.native;
     await page.reload();
     await page.getByRole('heading', {name:'今日科技簡報'}).waitFor();
     assert.equal(await page.locator('header.app-header').isVisible(), false);
     assert.equal(await page.locator('header.app-header .utility').count(), 1);
+    // Hold the actual edition GET. Tapping a row's text must already let the reader read.
+    let finishArticle;
+    const articleGate = new Promise(resolve => { finishArticle = resolve; });
+    const edition = origin + '/knowledge/items/2?version=102';
+    let editionGets = 0;
+    await page.route(edition, async route => {
+      editionGets++;
+      await articleGate;
+      await route.fulfill({contentType:'text/html; charset=utf-8',body:'<main><h1>完整帶讀</h1></main>'});
+    });
+    const second = page.locator('.daily-story').nth(1);
+    const detail = second.locator('details.briefing-quick-read');
+    await detail.locator('summary').click();
+    assert.equal(await detail.getAttribute('open'), '');
+    assert.equal(page.url(), origin + '/knowledge/');
+    await detail.locator('summary').click();
+    try {
+      const [, visible] = await Promise.all([page.waitForRequest(edition,{timeout:2500}),
+        second.locator('.briefing-lede').evaluate(el => new Promise(resolve => {
+          el.click();
+          requestAnimationFrame(() => {
+            const reader = document.querySelector('dialog[open]');
+            resolve([reader?.querySelector('h1')?.innerText,reader?.querySelector('.kh-passage')?.innerText,
+              reader?.checkVisibility() && reader.getBoundingClientRect().height > 0]);
+          });
+        }))]);
+      assert.deepEqual(visible, ['Paper 2', 'Change', true]);
+    } finally { finishArticle(); }
+    await page.getByRole('heading',{name:'完整帶讀'}).waitFor();
+    assert.equal(page.url(), edition);
+    assert.equal(editionGets, 1);
+    await page.goBack();
+    await page.getByRole('heading',{name:'今日科技簡報'}).waitFor();
+    assert.equal(await page.getByRole('heading',{name:'Paper 2',level:1}).count(),0);
+    const expiredEdition = origin + '/knowledge/items/3?version=103';
+    let challengeSeen = false;
+    await page.route(expiredEdition, route => {
+      if (!challengeSeen) {
+        loggedIn = false;
+        challengeSeen = true;
+      }
+      return loggedIn ? route.fulfill({contentType:'text/html; charset=utf-8',body:'<main><h1>重新登入後的文章</h1></main>'}) :
+        route.fulfill({status:401,contentType:'text/html; charset=utf-8',body:rendered.login});
+    });
+    await page.locator('.daily-story').nth(2).locator('h2 a').click();
+    await page.locator('#login-password').waitFor();
+    assert.equal(await page.locator('dialog[open]').count(),0);
+    await page.locator('#login-password').fill('synthetic-reader-pass');
+    await page.locator('#login-form button').click();
+    await page.getByRole('heading',{name:'重新登入後的文章'}).waitFor();
+    assert.equal(page.url(),expiredEdition);
+    html = rendered.native;
+    await page.goBack();
+    await page.getByRole('heading',{name:'今日科技簡報'}).waitFor();
     assert.equal(await page.evaluate(navigate(origin + '/knowledge/settings/')), false);
     await Promise.all([page.waitForURL(origin + '/knowledge/manage'), page.evaluate(navigate(origin + '/knowledge/manage'))]);
     assert.equal(await page.getByRole('heading', {name:'管理'}).isVisible(), true);

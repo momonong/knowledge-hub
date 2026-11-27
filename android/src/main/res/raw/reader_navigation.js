@@ -1,4 +1,4 @@
-(function (destination, expectedOrigin) {
+(function (destination, expectedOrigin, returnInHistory) {
     if (location.origin !== expectedOrigin ||
         !['/knowledge/', '/knowledge/reading', '/knowledge/library', '/knowledge/manage'].some(function (path) {
             return destination === expectedOrigin + path;
@@ -8,13 +8,22 @@
     }
     if (location.href.split('#')[0] === destination) return true;
 
-    const links = document.querySelectorAll('header.app-header nav a[href], header.app-header a.utility[href], header.topbar nav a[href]');
+    const links = document.querySelectorAll('header.app-header nav a[href], header.app-header a.utility[href], header.topbar nav a[href], .kh-library-heading nav a[href]');
     const link = Array.from(links).find(function (anchor) {
         return anchor.href === destination && (!anchor.target || anchor.target === '_self') &&
             !anchor.hasAttribute('download');
     });
     if (link) {
+        // Give the page's draft-saving handler the first chance to handle the real link.
+        function returnToPrevious(event) {
+            if (event.target === link && !event.defaultPrevented) {
+                event.preventDefault();
+                history.back();
+            }
+        }
+        if (returnInHistory) window.addEventListener('click', returnToPrevious);
         link.click();
+        if (returnInHistory) window.removeEventListener('click', returnToPrevious);
         return true;
     }
 

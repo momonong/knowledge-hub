@@ -11,8 +11,8 @@ android {
         applicationId = "com.momonong.knowledgehub"
         minSdk = 26
         targetSdk = 37
-        versionCode = 10
-        versionName = "1.0.8"
+        versionCode = 12
+        versionName = "1.0.10"
     }
 
     compileOptions {
