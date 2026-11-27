@@ -11,6 +11,7 @@ sys.path.insert(0, str(ROOT))
 from knowledge_hub.access import ReadingAccess
 from knowledge_hub.hosting import MountedApplication
 from knowledge_hub.reader_views import home
+from knowledge_hub.web import _layout
 
 
 class EmptyCatalog:
@@ -40,7 +41,10 @@ def card(index, day):
 def render(day):
     cards = [card(i, day) for i in range(1, 6)]
     views = EmptyCatalog()
-    payload = home(views, views, views, 'PRIVATE_CSRF', picks=cards, selected_day=day, today=day)
+    return home(views, views, views, 'PRIVATE_CSRF', picks=cards, selected_day=day, today=day)
+
+
+def mounted(payload, *, native=False):
     document = payload.encode()
     def app(environ, start):
         start('200 OK', [('Content-Type', 'text/html; charset=utf-8'), ('Content-Length', str(len(document)))])
@@ -49,6 +53,8 @@ def render(day):
     environ = {}
     setup_testing_defaults(environ)
     environ.update(PATH_INFO='/knowledge/', HTTP_HOST='momonong.me', REMOTE_ADDR='127.0.0.1', HTTP_X_FORWARDED_PROTO='https')
+    if native:
+        environ['HTTP_USER_AGENT'] = 'Android WebView KnowledgeHubAndroid/2'
     return b''.join(mounted(environ, lambda *_: None)).decode()
 
 
@@ -58,7 +64,9 @@ if __name__ == '__main__':
         access = ReadingAccess(Path(temp) / 'access.sqlite3', prefix='/knowledge', owner=lambda _: True)
         challenge = b''.join(access.challenge(lambda *_: None)).decode()
     static = ROOT / 'knowledge_hub' / 'static'
-    print(json.dumps({'complete': render(day),
+    briefing = render(day)
+    print(json.dumps({'complete': mounted(briefing), 'native': mounted(briefing, native=True),
+                      'manage': mounted(_layout('管理', 'PRIVATE_CSRF', '<h1>管理</h1>'), native=True),
                       'login': challenge, 'accessScript': (static / 'access.js').read_text(),
                       'accessCss': (static / 'access.css').read_text(), 'palette': (static / 'palette.css').read_text(),
                       'book': (static / 'book.svg').read_text(),

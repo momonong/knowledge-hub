@@ -188,8 +188,9 @@ class SiteReaderTest {
                 it.webViewClient.onPageFinished(it, home)
             }
         }
+        val initialScript = compose.runOnIdle { shadowOf(web).lastEvaluatedJavascript }
         compose.onNodeWithText("今日").assertIsSelected().performClick()
-        compose.runOnIdle { assertNull(shadowOf(web).lastEvaluatedJavascript) }
+        compose.runOnIdle { assertEquals(initialScript, shadowOf(web).lastEvaluatedJavascript) }
         compose.onNodeWithText("接續").performClick().assertIsNotSelected()
         compose.onNodeWithText("知識庫").performClick().assertIsNotSelected()
         compose.runOnIdle {
@@ -281,13 +282,28 @@ class SiteReaderTest {
 
     @Test
     fun closingTheNativeUpdateDialogKeepsTheSameWebView() {
-        val original = compose.runOnIdle { compose.activity.window.decorView.findWebView() }
+        val article = SitePolicy.HOME + "items/12?version=34#outline"
+        val original = compose.runOnIdle {
+            checkNotNull(compose.activity.window.decorView.findWebView()).also {
+                it.loadUrl(article)
+                it.webViewClient.onPageStarted(it, article, null)
+                it.webViewClient.onPageFinished(it, article)
+            }
+        }
         compose.onNodeWithContentDescription("更新應用程式").performClick()
         compose.onNodeWithTag("native-update-dialog").assertIsDisplayed()
         compose.onNodeWithText("關閉").performClick()
         compose.runOnIdle {
             assertTrue(original === compose.activity.window.decorView.findWebView())
+            assertEquals(article, shadowOf(original).lastLoadedUrl)
+            assertEquals(0, shadowOf(original).reloadInvocations)
             assertNull(shadowOf(compose.activity).nextStartedActivity)
+        }
+        compose.onNodeWithText("管理").performClick()
+        compose.runOnIdle {
+            assertTrue(shadowOf(original).lastEvaluatedJavascript.endsWith(
+                "(${JSONObject.quote(SitePolicy.MANAGE)}, ${JSONObject.quote(SitePolicy.ORIGIN)})",
+            ))
         }
     }
 
@@ -301,7 +317,8 @@ class SiteReaderTest {
                 web.webViewClient.onPageStarted(web, url, null)
                 web.webViewClient.onPageFinished(web, url)
             }
-            assertNull(shadowOf(web).lastEvaluatedJavascript)
+            assertEquals(SitePolicy.HOME + "access/login", shadowOf(web).lastLoadedUrl)
+            assertNull(shadowOf(web).lastEvaluatedJavascriptCallback)
         }
         compose.activityRule.scenario.recreate()
         compose.runOnIdle {
@@ -424,13 +441,26 @@ class SiteReaderTest {
         val rootBounds = root.fetchSemanticsNode().boundsInRoot
         val webBounds = compose.onNodeWithTag("reader-web-view").fetchSemanticsNode().boundsInRoot
         val navBounds = compose.onNodeWithTag(navigationTag).fetchSemanticsNode().boundsInRoot
+        val header = compose.onNodeWithTag("reader-header").fetchSemanticsNode().boundsInRoot
+        val manage = compose.onNodeWithText("管理").assertIsDisplayed()
+            .assertWidthIsAtLeast(48.dp).assertHeightIsAtLeast(48.dp).fetchSemanticsNode().boundsInRoot
+        val update = compose.onNodeWithContentDescription("更新應用程式").assertIsDisplayed()
+            .assertWidthIsAtLeast(48.dp).assertHeightIsAtLeast(48.dp).fetchSemanticsNode().boundsInRoot
+        assertEquals(header.top, rootBounds.top, 1f)
+        assertEquals(header.right, rootBounds.right, 1f)
+        assertTrue(header.contains(manage.center) && header.contains(update.center))
+        assertEquals(manage.center.y, update.center.y, 1f)
+        assertTrue(manage.right <= update.left && update.left - manage.right <= 8f)
+        assertTrue(header.right - update.right in 0f..16f)
+        assertFalse(navBounds.overlaps(update))
+        assertTrue(webBounds.top >= header.bottom)
         assertTrue(webBounds.width > 0 && webBounds.height > 0)
         assertFalse(webBounds.overlaps(navBounds))
         if (navigationTag == "reader-navigation-bar") {
             assertEquals(rootBounds.width.roundToInt(), webBounds.width.roundToInt())
-            assertEquals(rootBounds.height.roundToInt(), (webBounds.height + navBounds.height).roundToInt())
+            assertEquals(rootBounds.height.roundToInt(), (header.height + webBounds.height + navBounds.height).roundToInt())
         } else {
-            assertEquals(rootBounds.height.roundToInt(), webBounds.height.roundToInt())
+            assertEquals(rootBounds.height.roundToInt(), (header.height + webBounds.height).roundToInt())
             assertEquals(rootBounds.width.roundToInt(), (webBounds.width + navBounds.width).roundToInt())
         }
         val directory = System.getProperty("knowledgehub.screenshots") ?: return
@@ -443,6 +473,7 @@ class SiteReaderTest {
             .put("width", rect.width.roundToInt()).put("height", rect.height.roundToInt())
         File(directory, "$name.json").writeText(
             JSONObject().put("width", image.width).put("height", image.height)
+                .put("header", pixelBounds(header)).put("manage", pixelBounds(manage)).put("update", pixelBounds(update))
                 .put("webView", pixelBounds(webBounds)).put("navigation", pixelBounds(navBounds)).toString(2) + "\n",
         )
     }

@@ -2,6 +2,7 @@
 // python3 -B android/checks/site_fixture.py | node android/checks/verify_site_reader.cjs
 const assert = require('node:assert/strict');
 const {readFileSync} = require('node:fs');
+const path = require('node:path');
 const {chromium} = require('playwright');
 
 const rendered = JSON.parse(readFileSync(0, 'utf8'));
@@ -34,6 +35,7 @@ async function main() {
           return route.fulfill({json:{authenticated:true},headers:{'set-cookie':'synthetic-kh=authenticated; Path=/knowledge/; Secure; HttpOnly; SameSite=Strict'}});
         }
         case '/knowledge/items/1': return route.fulfill({contentType:'text/html; charset=utf-8',body:'<main><h1>固定版本讀者測試頁</h1></main>'});
+        case '/knowledge/manage': return route.fulfill({contentType:'text/html; charset=utf-8', body:rendered.manage});
         case '/knowledge/static/reader.css': return route.fulfill({contentType:'text/css',body:rendered.readerCss});
         case '/knowledge/static/briefing.css': return route.fulfill({contentType:'text/css',body:rendered.briefingCss});
         default: return route.fulfill({status:204});
@@ -67,7 +69,31 @@ async function main() {
     assert.equal(await page.getByRole('heading').innerText(), '固定版本讀者測試頁');
     await page.goBack();
     await page.getByRole('heading', {name:'今日科技簡報'}).waitFor();
-    process.stdout.write('Single reader: login, themes, daily stories, fixed-edition navigation and back passed.\n');
+    assert.equal(await page.locator('header.app-header .utility').isVisible(), true);
+
+    const raw = name => readFileSync(path.join(__dirname, '../src/main/res/raw', name + '.js'), 'utf8').trim();
+    const header = raw('reader_header') + '(' + JSON.stringify(origin) + ')';
+    const navigate = target => raw('reader_navigation') + '(' + JSON.stringify(target) + ',' + JSON.stringify(origin) + ')';
+    await page.addInitScript({content:header});
+    html = rendered.native;
+    await page.reload();
+    await page.getByRole('heading', {name:'今日科技簡報'}).waitFor();
+    assert.equal(await page.locator('header.app-header').isVisible(), false);
+    assert.equal(await page.locator('header.app-header .utility').count(), 1);
+    assert.equal(await page.evaluate(navigate(origin + '/knowledge/settings/')), false);
+    await Promise.all([page.waitForURL(origin + '/knowledge/manage'), page.evaluate(navigate(origin + '/knowledge/manage'))]);
+    assert.equal(await page.getByRole('heading', {name:'管理'}).isVisible(), true);
+    assert.equal(await page.locator('header.topbar .brand').isVisible(), false);
+    await page.getByText('工具', {exact:true}).click();
+    assert.equal(await page.getByRole('link', {name:'搜尋',exact:true}).isVisible(), true);
+
+    html = rendered.login;
+    loggedIn = false;
+    await page.goto(origin + '/knowledge/');
+    await page.locator('#login-password').waitFor();
+    assert.equal(await page.locator('header .brand').isVisible(), false);
+    assert.equal(await page.getByRole('link', {name:'裝置管理'}).isVisible(), true);
+    process.stdout.write('Passed browser login and reading, app header, management navigation, library tools and device access.\n');
   } finally { await browser.close(); }
 }
 

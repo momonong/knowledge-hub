@@ -1,6 +1,6 @@
 (function (destination, expectedOrigin) {
     if (location.origin !== expectedOrigin ||
-        !['/knowledge/', '/knowledge/reading', '/knowledge/library'].some(function (path) {
+        !['/knowledge/', '/knowledge/reading', '/knowledge/library', '/knowledge/manage'].some(function (path) {
             return destination === expectedOrigin + path;
         }) ||
         !(location.pathname === '/knowledge' || location.pathname.startsWith('/knowledge/'))) {
@@ -8,7 +8,7 @@
     }
     if (location.href.split('#')[0] === destination) return true;
 
-    const links = document.querySelectorAll('header.app-header nav a[href], header.topbar nav a[href]');
+    const links = document.querySelectorAll('header.app-header nav a[href], header.app-header a.utility[href], header.topbar nav a[href]');
     const link = Array.from(links).find(function (anchor) {
         return anchor.href === destination && (!anchor.target || anchor.target === '_self') &&
             !anchor.hasAttribute('download');

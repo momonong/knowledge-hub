@@ -5,6 +5,7 @@ import java.net.URI
 internal object SitePolicy {
     const val ORIGIN = "https://momonong.me"
     const val HOME = "$ORIGIN/knowledge/"
+    const val MANAGE = "${HOME}manage"
     const val APK_DOWNLOAD = "${HOME}knowledge-hub.apk"
     const val OWNER_SETTINGS = "${HOME}settings/"
     private const val SITE_HOST = "momonong.me"
@@ -12,7 +13,7 @@ internal object SitePolicy {
     private val itemVersion = Regex("version=[1-9][0-9]{0,18}")
     private val anchor = Regex("(?:[A-Za-z0-9_.:~!-]|%[0-9A-Fa-f]{2})+")
     private val siteIcons = Regex("/sites/_icons/v1/knowledge(?:\\.(?:ico|svg)|-180\\.png)")
-    private val navigationPages = setOf(HOME + "reading", HOME + "library", HOME + "manage")
+    private val navigationPages = setOf(HOME + "reading", HOME + "library", MANAGE)
 
     fun allowsSite(url: String): Boolean {
         val uri = httpsUri(url) ?: return false

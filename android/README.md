@@ -1,10 +1,10 @@
 # Knowledge Hub 手機 App
 
-Android 1.0.7 啟動後，在 App 內直接開啟 Knowledge Hub。手機與網頁共用「今天讀什麼」、「接續與理解」和「知識庫」，摺疊螢幕隨視窗寬度調整。文章、導讀、追問與線上筆記都沿用網站的讀者帳號。[開啟 Knowledge Hub](https://momonong.me/knowledge/)
+Android 1.0.8 啟動後，在 App 內直接開啟 Knowledge Hub。手機與網頁共用「今天讀什麼」、「接續與理解」和「知識庫」，摺疊螢幕隨視窗寬度調整。文章、導讀、追問與線上筆記都沿用網站的讀者帳號。[開啟 Knowledge Hub](https://momonong.me/knowledge/)
 
 用原生導覽的「今日」、「接續」和「知識庫」切換閱讀區。較窄的視窗使用底列，寬視窗或高度較低的橫向視窗使用側欄。文章中的站內連結會繼續用同一個閱讀器開啟，在文章按 Android 返回鍵可回到上一個網頁。網路中斷時，點「重試連線」可重新開啟該頁。
 
-點導覽列的下載箭頭會開啟 Android 更新彈窗。若下載需要登入，點「在 App 內登入」，完成後回到更新彈窗，再依 Android 提示安裝。舊版裝置有收藏時，彈窗內也可選「匯出舊收藏」，透過 Android 檔案選擇器儲存 HTML。首次安裝可從 Momonong 服務頁的 Knowledge Hub 詳情進入下載點。[服務頁](https://momonong.me/#services) · [Android 下載點](https://momonong.me/knowledge/knowledge-hub.apk)
+點右上角「管理」右邊的下載箭頭會開啟 Android 更新彈窗。關閉彈窗可繼續閱讀原來的段落。若下載需要登入，點「在 App 內登入」，完成後回到更新彈窗，再依 Android 提示安裝。舊版裝置有收藏時，彈窗內也可選「匯出舊收藏」，透過 Android 檔案選擇器儲存 HTML。首次安裝可從 Momonong 服務頁的 Knowledge Hub 詳情進入下載點。[服務頁](https://momonong.me/#services) · [Android 下載點](https://momonong.me/knowledge/knowledge-hub.apk)
 
 ## 通行密鑰與信任裝置
 

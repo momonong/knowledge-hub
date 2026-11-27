@@ -46,6 +46,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.edit
 import androidx.webkit.WebSettingsCompat
+import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 import java.io.ByteArrayInputStream
 import org.json.JSONObject
@@ -67,6 +68,10 @@ internal fun SiteReader(
     val readerResume = remember(context) { context.getSharedPreferences("site_reader", Context.MODE_PRIVATE) }
     val navigationScript = remember(resources) {
         resources.openRawResource(R.raw.reader_navigation).bufferedReader().use { it.readText().trim() }
+    }
+    val headerScript = remember(resources) {
+        val script = resources.openRawResource(R.raw.reader_header).bufferedReader().use { it.readText().trim() }
+        "$script(${JSONObject.quote(SitePolicy.ORIGIN)})"
     }
     // Save only a vetted GET destination. A WebView history bundle can retain POST state.
     var resumeUrl by rememberSaveable {
@@ -108,18 +113,18 @@ internal fun SiteReader(
         if (loginForUpdate) onReturnToUpdate() else if (!hasHistory) onBackAtRoot()
     }
 
-    fun navigateTo(destination: ReaderDestination) {
+    fun navigateTo(url: String) {
         if (loading || pendingDispatch || loginForUpdate) return
         val view = webView
         if (view == null) {
-            load(destination.url)
+            load(url)
             return
         }
         val currentUrl = view.url ?: return
-        if (!SitePolicy.allowsSite(currentUrl) || currentUrl.substringBefore('#') == destination.url) return
+        if (!SitePolicy.allowsSite(currentUrl) || currentUrl.substringBefore('#') == url) return
         val epoch = navigationEpoch
         pendingDispatch = true
-        val invocation = "$navigationScript(${JSONObject.quote(destination.url)}, ${JSONObject.quote(SitePolicy.ORIGIN)})"
+        val invocation = "$navigationScript(${JSONObject.quote(url)}, ${JSONObject.quote(SitePolicy.ORIGIN)})"
         view.evaluateJavascript(invocation) { dispatched ->
             if (view === webView && epoch == navigationEpoch) {
                 pendingDispatch = false
@@ -134,7 +139,15 @@ internal fun SiteReader(
         if (loginForUpdate && (!loading || retryUrl != SitePolicy.HOME)) load(SitePolicy.HOME)
     }
     BackHandler { goBack() }
-    ReaderNavigationLayout(selected, ::navigateTo, onUpdate, showNavigation = !loginForUpdate, modifier = modifier) {
+    ReaderNavigationLayout(
+        selected = selected,
+        onSelect = { navigateTo(it.url) },
+        onManage = { navigateTo(SitePolicy.MANAGE) },
+        onUpdate = onUpdate,
+        canNavigate = !loading && failure == null,
+        showNavigation = !loginForUpdate,
+        modifier = modifier,
+    ) {
         Column(Modifier.fillMaxSize()) {
             if (loading && failure == null) LinearProgressIndicator(Modifier.fillMaxWidth())
             notice?.let {
@@ -151,6 +164,12 @@ internal fun SiteReader(
                             WebView(viewContext).also { view ->
                                 webView = view
                                 configureSiteWebView(view)
+                                val headerOnFinish = if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
+                                    WebViewCompat.addDocumentStartJavaScript(view, headerScript, setOf(SitePolicy.ORIGIN))
+                                    null
+                                } else {
+                                    headerScript
+                                }
                                 view.webViewClient = KnowledgeSiteClient(
                                     onStart = { url ->
                                         navigationEpoch++
@@ -160,7 +179,10 @@ internal fun SiteReader(
                                         notice = null
                                         retryUrl = SitePolicy.resumableUrl(url) ?: resumeUrl
                                     },
-                                    onFinish = { loading = false },
+                                    onFinish = {
+                                        if (headerOnFinish != null) view.evaluateJavascript(headerOnFinish, null)
+                                        loading = false
+                                    },
                                     onSafePage = { url ->
                                         SitePolicy.readerDestination(url)?.let { selected = it }
                                         SitePolicy.resumableUrl(url)?.let { safeUrl ->
