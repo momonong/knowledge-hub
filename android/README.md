@@ -12,7 +12,9 @@ Android 1.0.10 調整了桌面藍色書頁的留白，圓形與主題圖示都�
 
 支援 WebAuthn 的 Android System WebView 會以第一方 App 模式呼叫 Android Credential Manager。讀者從網頁按鈕啟動驗證，密碼登入也可隨時使用。App 進入背景時會寫入網站的持久 Cookie。切回仍在執行的 App 可繼續閱讀；重新啟動後可從「接續」找回同版文章。站主管理頁從 App 點選時會先確認，再用系統瀏覽器開啟。[Android WebView 登入指南](https://developer.android.com/identity/sign-in/credential-manager-webview)
 
-發行時，將 [Android 發行憑證的 Digital Asset Links 宣告](assetlinks.release-entry.json)合併到 `momonong.me` 根網域的 `/.well-known/assetlinks.json` 陣列，保留該網域已有的所有宣告。如果相同套件、憑證與關聯已存在，沿用該筆。檔案需允許未登入的 HTTPS 請求直接取得，回應 HTTP 200 與 `Content-Type: application/json`。[Digital Asset Links 要求](https://developer.android.com/identity/credential-manager/prerequisites)
+發行時，將 Android 發行憑證的 Digital Asset Links 宣告合併到 `momonong.me` 根網域的 `/.well-known/assetlinks.json` 陣列，保留該網域已有的所有宣告。如果相同套件、憑證與關聯已存在，沿用該筆。檔案需允許未登入的 HTTPS 請求直接取得，回應 HTTP 200 與 `Content-Type: application/json`。[發行宣告](assetlinks.release-entry.json) · [Digital Asset Links 要求](https://developer.android.com/identity/credential-manager/prerequisites)
+
+以正式套件名稱和發行憑證查詢 Google Digital Asset Links API，確認 `delegate_permission/common.get_login_creds` 和 `delegate_permission/common.handle_all_urls` 各自回傳 `linked: true`。部分 Android 憑證提供者會以後者核對建立通行金鑰的網域。[Google 通行金鑰跨平台設定](https://codelabs.developers.google.com/seamless-credential-sharing)
 
 通行密鑰驗收需使用與測試網域的 Digital Asset Links 相符的簽署憑證，並在具備螢幕鎖與通行密鑰提供者的 Android 手機上執行。驗收包括註冊、驗證、重新開啟 App 後從「接續」找回原文章、撤銷信任後重新驗證，以及較舊 WebView 的密碼登入。正式網域的候選宣告僅涵蓋發行憑證。
 
